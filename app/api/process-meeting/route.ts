@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { VertexAI, GenerativeModel } from '@google-cloud/vertexai';
-import formidable, { IncomingForm } from 'formidable';
+import formidable from 'formidable';
 import { Readable } from 'stream';
 import fs from 'fs';
 import { promisify } from 'util';
@@ -21,7 +21,19 @@ async function parseFormData(req: NextRequest): Promise<{ audioBuffer: Buffer; f
   readable.push(null);
 
   return new Promise((resolve, reject) => {
-    form.parse(readable as any, async (err, _fields, files) => {
+    // Create a mock request object that formidable expects
+    const mockReq = {
+      headers: {
+        'content-type': req.headers.get('content-type') || 'multipart/form-data',
+        'content-length': body.byteLength.toString(),
+      },
+      pipe: (stream: any) => {
+        readable.pipe(stream);
+        return stream;
+      },
+    } as any;
+
+    form.parse(mockReq, async (err, _fields, files) => {
       if (err) {
         reject(err);
         return;
