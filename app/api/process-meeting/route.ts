@@ -47,8 +47,8 @@ export async function POST(req: NextRequest) {
     // Initialize Gemini AI
     const genAI = new GoogleGenerativeAI(apiKey);
     
-    // Use the latest stable flash model
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' });
+    // Use the latest Gemini 2.5 Flash model
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
     // Convert audio buffer to base64
     const audioBase64 = audioBuffer.toString('base64');
