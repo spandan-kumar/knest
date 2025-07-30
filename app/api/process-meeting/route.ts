@@ -8,7 +8,7 @@ import { promisify } from 'util';
 const readFile = promisify(fs.readFile);
 const unlink = promisify(fs.unlink);
 
-async function parseFormData(req: NextRequest): Promise<{ audioBuffer: Buffer }> {
+async function parseFormData(req: NextRequest): Promise<{ audioBuffer: Buffer; fileName: string; mimeType: string }> {
   const form = formidable({
     maxFileSize: 50 * 1024 * 1024, // 50MB
     keepExtensions: true,
@@ -33,10 +33,28 @@ async function parseFormData(req: NextRequest): Promise<{ audioBuffer: Buffer }>
         return;
       }
 
+      // Validate file size
+      if (audioFile.size && audioFile.size > 50 * 1024 * 1024) {
+        reject(new Error('File size exceeds 50MB limit'));
+        return;
+      }
+
+      // Validate file type
+      const validMimeTypes = ['audio/wav', 'audio/mp3', 'audio/m4a', 'audio/webm', 'audio/ogg', 'audio/mpeg'];
+      if (audioFile.mimetype && !validMimeTypes.includes(audioFile.mimetype)) {
+        reject(new Error(`Unsupported audio format: ${audioFile.mimetype}`));
+        return;
+      }
+
       try {
         const audioBuffer = await readFile(audioFile.filepath);
         await unlink(audioFile.filepath); // Clean up temp file
-        resolve({ audioBuffer });
+        
+        resolve({ 
+          audioBuffer,
+          fileName: audioFile.originalFilename || 'recording.wav',
+          mimeType: audioFile.mimetype || 'audio/wav'
+        });
       } catch (error) {
         reject(error);
       }
@@ -57,7 +75,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Parse the multipart form data
-    const { audioBuffer } = await parseFormData(req);
+    const { audioBuffer, fileName, mimeType } = await parseFormData(req);
 
     // Initialize Vertex AI
     const vertexAI = new VertexAI({
@@ -101,7 +119,7 @@ Do not include any text or formatting outside of this JSON object.`;
           },
           {
             inlineData: {
-              mimeType: 'audio/wav',
+              mimeType: mimeType,
               data: audioBase64,
             },
           },
@@ -140,6 +158,29 @@ Do not include any text or formatting outside of this JSON object.`;
     return NextResponse.json(parsedResult);
   } catch (error) {
     console.error('Error processing meeting:', error);
+    
+    // Return more specific error messages
+    if (error instanceof Error) {
+      if (error.message.includes('File size exceeds')) {
+        return NextResponse.json(
+          { error: 'File size exceeds 50MB limit' },
+          { status: 400 }
+        );
+      }
+      if (error.message.includes('Unsupported audio format')) {
+        return NextResponse.json(
+          { error: error.message },
+          { status: 400 }
+        );
+      }
+      if (error.message.includes('No audio file provided')) {
+        return NextResponse.json(
+          { error: 'No audio file provided' },
+          { status: 400 }
+        );
+      }
+    }
+    
     return NextResponse.json(
       { error: 'Failed to process meeting audio' },
       { status: 500 }
