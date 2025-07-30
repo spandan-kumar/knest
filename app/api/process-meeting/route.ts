@@ -1,78 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import formidable from 'formidable';
-import { Readable } from 'stream';
-import fs from 'fs';
-import { promisify } from 'util';
-
-const readFile = promisify(fs.readFile);
-const unlink = promisify(fs.unlink);
-
-async function parseFormData(req: NextRequest): Promise<{ audioBuffer: Buffer; fileName: string; mimeType: string }> {
-  const form = formidable({
-    maxFileSize: 50 * 1024 * 1024, // 50MB
-    keepExtensions: true,
-  });
-
-  // Convert ReadableStream to Node.js Readable stream
-  const body = await req.arrayBuffer();
-  const readable = new Readable();
-  readable.push(Buffer.from(body));
-  readable.push(null);
-
-  return new Promise((resolve, reject) => {
-    // Create a mock request object that formidable expects
-    const mockReq = {
-      headers: {
-        'content-type': req.headers.get('content-type') || 'multipart/form-data',
-        'content-length': body.byteLength.toString(),
-      },
-      pipe: (stream: any) => {
-        readable.pipe(stream);
-        return stream;
-      },
-    } as any;
-
-    form.parse(mockReq, async (err, _fields, files) => {
-      if (err) {
-        reject(err);
-        return;
-      }
-
-      const audioFile = Array.isArray(files.audio) ? files.audio[0] : files.audio;
-      if (!audioFile) {
-        reject(new Error('No audio file provided'));
-        return;
-      }
-
-      // Validate file size
-      if (audioFile.size && audioFile.size > 50 * 1024 * 1024) {
-        reject(new Error('File size exceeds 50MB limit'));
-        return;
-      }
-
-      // Validate file type
-      const validMimeTypes = ['audio/wav', 'audio/mp3', 'audio/m4a', 'audio/webm', 'audio/ogg', 'audio/mpeg'];
-      if (audioFile.mimetype && !validMimeTypes.includes(audioFile.mimetype)) {
-        reject(new Error(`Unsupported audio format: ${audioFile.mimetype}`));
-        return;
-      }
-
-      try {
-        const audioBuffer = await readFile(audioFile.filepath);
-        await unlink(audioFile.filepath); // Clean up temp file
-        
-        resolve({ 
-          audioBuffer,
-          fileName: audioFile.originalFilename || 'recording.wav',
-          mimeType: audioFile.mimetype || 'audio/wav'
-        });
-      } catch (error) {
-        reject(error);
-      }
-    });
-  });
-}
 
 export async function POST(req: NextRequest) {
   try {
@@ -86,7 +13,36 @@ export async function POST(req: NextRequest) {
     }
 
     // Parse the multipart form data
-    const { audioBuffer, fileName, mimeType } = await parseFormData(req);
+    const formData = await req.formData();
+    const audioFile = formData.get('audio') as File;
+
+    if (!audioFile) {
+      return NextResponse.json(
+        { error: 'No audio file provided' },
+        { status: 400 }
+      );
+    }
+
+    // Validate file size
+    if (audioFile.size > 50 * 1024 * 1024) {
+      return NextResponse.json(
+        { error: 'File size exceeds 50MB limit' },
+        { status: 400 }
+      );
+    }
+
+    // Validate file type
+    const validMimeTypes = ['audio/wav', 'audio/mp3', 'audio/m4a', 'audio/webm', 'audio/ogg', 'audio/mpeg'];
+    if (!validMimeTypes.includes(audioFile.type)) {
+      return NextResponse.json(
+        { error: `Unsupported audio format: ${audioFile.type}` },
+        { status: 400 }
+      );
+    }
+
+    // Convert file to buffer
+    const bytes = await audioFile.arrayBuffer();
+    const audioBuffer = Buffer.from(bytes);
 
     // Initialize Gemini AI
     const genAI = new GoogleGenerativeAI(apiKey);
@@ -118,7 +74,7 @@ Do not include any text or formatting outside of this JSON object.`;
       prompt,
       {
         inlineData: {
-          mimeType: mimeType,
+          mimeType: audioFile.type,
           data: audioBase64,
         },
       },
