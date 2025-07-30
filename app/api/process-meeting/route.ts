@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { VertexAI, GenerativeModel } from '@google-cloud/vertexai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import formidable from 'formidable';
 import { Readable } from 'stream';
 import fs from 'fs';
@@ -76,12 +76,11 @@ async function parseFormData(req: NextRequest): Promise<{ audioBuffer: Buffer; f
 
 export async function POST(req: NextRequest) {
   try {
-    const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID;
-    const location = process.env.GOOGLE_CLOUD_LOCATION || 'us-central1';
+    const apiKey = process.env.GEMINI_API_KEY;
 
-    if (!projectId) {
+    if (!apiKey) {
       return NextResponse.json(
-        { error: 'Google Cloud project ID not configured' },
+        { error: 'Gemini API key not configured. Please set GEMINI_API_KEY environment variable.' },
         { status: 500 }
       );
     }
@@ -89,16 +88,9 @@ export async function POST(req: NextRequest) {
     // Parse the multipart form data
     const { audioBuffer, fileName, mimeType } = await parseFormData(req);
 
-    // Initialize Vertex AI
-    const vertexAI = new VertexAI({
-      project: projectId,
-      location: location,
-    });
-
-    // Get the generative model
-    const model: GenerativeModel = vertexAI.getGenerativeModel({
-      model: 'gemini-2.5-pro',
-    });
+    // Initialize Gemini AI
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
 
     // Convert audio buffer to base64
     const audioBase64 = audioBuffer.toString('base64');
@@ -122,25 +114,18 @@ Return the entire output as a single, valid JSON object with the following struc
 Do not include any text or formatting outside of this JSON object.`;
 
     // Make the request to Gemini
-    const result = await model.generateContent({
-      contents: [{
-        role: 'user',
-        parts: [
-          {
-            text: prompt,
-          },
-          {
-            inlineData: {
-              mimeType: mimeType,
-              data: audioBase64,
-            },
-          },
-        ],
-      }],
-    });
+    const result = await model.generateContent([
+      prompt,
+      {
+        inlineData: {
+          mimeType: mimeType,
+          data: audioBase64,
+        },
+      },
+    ]);
 
-    const response = result.response;
-    const text = response.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const response = await result.response;
+    const text = response.text();
 
     // Parse the JSON response
     let parsedResult;
@@ -189,6 +174,12 @@ Do not include any text or formatting outside of this JSON object.`;
         return NextResponse.json(
           { error: 'No audio file provided' },
           { status: 400 }
+        );
+      }
+      if (error.message.includes('API key not configured')) {
+        return NextResponse.json(
+          { error: 'Gemini API key not configured' },
+          { status: 500 }
         );
       }
     }
