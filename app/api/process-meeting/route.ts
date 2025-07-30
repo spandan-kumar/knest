@@ -46,7 +46,9 @@ export async function POST(req: NextRequest) {
 
     // Initialize Gemini AI
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+    
+    // Use a more stable model
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
     // Convert audio buffer to base64
     const audioBase64 = audioBuffer.toString('base64');
@@ -69,6 +71,10 @@ Return the entire output as a single, valid JSON object with the following struc
 
 Do not include any text or formatting outside of this JSON object.`;
 
+    console.log('Making Gemini API call...');
+    console.log('Audio file type:', audioFile.type);
+    console.log('Audio file size:', audioFile.size);
+
     // Make the request to Gemini
     const result = await model.generateContent([
       prompt,
@@ -80,8 +86,12 @@ Do not include any text or formatting outside of this JSON object.`;
       },
     ]);
 
+    console.log('Gemini API call successful');
+
     const response = await result.response;
     const text = response.text();
+
+    console.log('Raw Gemini response:', text.substring(0, 200) + '...');
 
     // Parse the JSON response
     let parsedResult;
@@ -89,6 +99,7 @@ Do not include any text or formatting outside of this JSON object.`;
       // Clean the response text to extract just the JSON
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {
+        console.error('No JSON found in response. Full response:', text);
         throw new Error('No JSON found in response');
       }
       parsedResult = JSON.parse(jsonMatch[0]);
@@ -102,12 +113,14 @@ Do not include any text or formatting outside of this JSON object.`;
 
     // Validate the response structure
     if (!parsedResult.summary || !parsedResult.tasks || !parsedResult.transcript) {
+      console.error('Invalid response structure:', parsedResult);
       return NextResponse.json(
         { error: 'Invalid response structure from AI' },
         { status: 500 }
       );
     }
 
+    console.log('Successfully processed meeting analysis');
     return NextResponse.json(parsedResult);
   } catch (error) {
     console.error('Error processing meeting:', error);
@@ -138,6 +151,12 @@ Do not include any text or formatting outside of this JSON object.`;
           { status: 500 }
         );
       }
+      
+      // Return the actual error message for debugging
+      return NextResponse.json(
+        { error: `API Error: ${error.message}` },
+        { status: 500 }
+      );
     }
     
     return NextResponse.json(
