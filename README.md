@@ -29,7 +29,7 @@ AI-powered meeting assistant with audio recording and analysis using Google's Ge
    - Create a `.env.local` file in the root directory
    - Add your Gemini API key:
      ```
-     GEMINI_API_KEY=your-api-key-here
+     GEMINI_KEY=your-api-key-here
      ```
 
 3. **Run the development server:**
@@ -106,7 +106,7 @@ bun run docker:run
 
 3. **Set Environment Variables:**
    ```
-   GEMINI_API_KEY=your-api-key-here
+   GEMINI_KEY=your-api-key-here
    NODE_ENV=production
    NEXT_TELEMETRY_DISABLED=1
    ```
@@ -130,7 +130,7 @@ This app can be deployed to any platform that supports Docker:
 Make sure to set the following environment variable in your deployment platform:
 
 ```
-GEMINI_API_KEY=your-api-key-here
+GEMINI_KEY=your-api-key-here
 ```
 
 ## API Key Setup
@@ -146,7 +146,7 @@ GEMINI_API_KEY=your-api-key-here
 ### Common Issues
 
 **"Gemini API key not configured"**
-- Ensure you've set the `GEMINI_API_KEY` environment variable
+- Ensure you've set the `GEMINI_KEY` environment variable
 - Check that the API key is valid and has proper permissions
 
 **"File size exceeds 50MB limit"**

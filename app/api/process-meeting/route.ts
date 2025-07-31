@@ -8,12 +8,12 @@ export async function POST(req: NextRequest) {
   
   try {
     console.log('🔑 Checking API key...');
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.GEMINI_KEY;
 
     if (!apiKey) {
       console.error('❌ API key not found');
       return NextResponse.json(
-        { error: 'Gemini API key not configured. Please set GEMINI_API_KEY environment variable.' },
+        { error: 'Gemini API key not configured. Please set GEMINI_KEY environment variable.' },
         { status: 500 }
       );
     }
