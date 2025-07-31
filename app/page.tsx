@@ -306,6 +306,13 @@ export default function Home() {
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
+      console.log('📁 File selected:', {
+        name: file.name,
+        type: file.type,
+        size: file.size,
+        sizeMB: (file.size / (1024 * 1024)).toFixed(2) + 'MB'
+      });
+      
       if (file.size > 200 * 1024 * 1024) {
         setError('File size must be less than 200MB');
         return;
@@ -316,6 +323,7 @@ export default function Home() {
         'audio/flac',
         'audio/mp3',
         'audio/m4a',
+        'audio/x-m4a', // Alternative M4A MIME type
         'audio/mpeg',
         'audio/mpga',
         'audio/mp4',

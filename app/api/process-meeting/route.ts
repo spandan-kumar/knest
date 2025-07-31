@@ -48,6 +48,7 @@ export async function POST(req: NextRequest) {
       'audio/flac',
       'audio/mp3',
       'audio/m4a',
+      'audio/x-m4a', // Alternative M4A MIME type
       'audio/mpeg',
       'audio/mpga',
       'audio/mp4',
@@ -60,12 +61,17 @@ export async function POST(req: NextRequest) {
       'video/webm',
       'video/ogg'
     ];
+    
+    console.log('🔍 File validation - Name:', audioFile.name, 'Type:', audioFile.type, 'Size:', audioFile.size);
+    
     if (!validMimeTypes.includes(audioFile.type)) {
+      console.error('❌ Invalid file type:', audioFile.type);
       return NextResponse.json(
         { error: `Unsupported audio format: ${audioFile.type}. Supported formats: AAC, FLAC, MP3, M4A, MPEG, MPGA, MP4, OPUS, PCM, WAV, WebM` },
         { status: 400 }
       );
     }
+    console.log('✅ File type validated:', audioFile.type);
 
     // Convert file to buffer
     const bytes = await audioFile.arrayBuffer();
