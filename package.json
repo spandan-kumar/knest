@@ -3,14 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
-    "build": "next build",
-    "start": "next start",
-    "lint": "next lint",
+    "dev": "bun run next dev --turbopack",
+    "build": "bun run next build",
+    "start": "bun run next start",
+    "lint": "bun run next lint",
     "docker:build": "docker build -t knest .",
-    "docker:build:node": "docker build -f Dockerfile.node -t knest-node .",
     "docker:run": "docker run -p 3000:3000 --env-file .env knest",
-    "docker:run:node": "docker run -p 3000:3000 --env-file .env knest-node",
     "docker:compose": "docker-compose up --build",
     "docker:compose:down": "docker-compose down"
   },
@@ -23,7 +21,6 @@
     "react-dom": "19.1.0"
   },
   "devDependencies": {
-    "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "autoprefixer": "^10.4.18",

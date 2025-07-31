@@ -1,10 +1,8 @@
-version: '3.8'
-
 services:
   knest:
     build:
       context: .
-      dockerfile: Dockerfile.node
+      dockerfile: Dockerfile
     ports:
       - "3000:3000"
     environment:
