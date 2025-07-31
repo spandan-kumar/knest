@@ -1,4 +1,4 @@
-# Gemini Meeting Notes
+# KNest
 
 AI-powered meeting assistant with audio recording and analysis using Google's Gemini 2.0 Flash model.
 
