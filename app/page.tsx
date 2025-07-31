@@ -1,45 +1,72 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { compressAudio, shouldCompressAudio, formatFileSize, type CompressionResult } from '@/lib/audioCompression';
-
-interface AnalysisResult {
-  summary: string;
-  tasks: Array<{ 
-    action: string; 
-    assigned_to: string;
-    deadline?: string;
-    priority?: string;
-    context?: string;
-  }>;
-  transcript: string;
-  participants?: Array<{
-    speaker_id: string;
-    participation_level: string;
-    key_contributions: string[];
-    expertise_areas: string[];
-  }>;
-  topics?: Array<{
-    topic: string;
-    duration_emphasis: string;
-    key_points: string[];
-    decisions_made: string[];
-    open_questions: string[];
-  }>;
-  meeting_metadata?: {
-    overall_tone: string;
-    productivity_level: string;
-    total_speakers: string;
-    main_outcomes: string[];
-    follow_up_required: string[];
-  };
-}
+import { compressAudio, shouldCompressAudio, formatFileSize } from '@/lib/audioCompression';
+import { clientLoggers } from '@/lib/client-logger';
+import type { AnalysisResult, CompressionResult } from '@/lib/types/meeting.types';
+import SpeakerMapping from './components/SpeakerMapping';
 
 interface ResultsDisplayProps {
   result: AnalysisResult;
 }
 
 function ResultsDisplay({ result }: ResultsDisplayProps) {
+  const [speakerMappings, setSpeakerMappings] = useState<Record<string, string>>({});
+  const [processedResult, setProcessedResult] = useState<AnalysisResult>(result);
+
+  // Function to replace speaker IDs with real names
+  const replaceSpeakerNames = (text: string, mappings: Record<string, string>): string => {
+    let processedText = text;
+    Object.entries(mappings).forEach(([speakerId, realName]) => {
+      if (realName.trim()) {
+        // Replace "Speaker 1" with real name, case insensitive
+        const regex = new RegExp(`\\b${speakerId}\\b`, 'gi');
+        processedText = processedText.replace(regex, realName);
+      }
+    });
+    return processedText;
+  };
+
+  // Function to update speaker mappings and process the result
+  const handleSpeakerMappingUpdate = (mappings: Record<string, string>) => {
+    setSpeakerMappings(mappings);
+    
+    // Create a processed version of the result with replaced names
+    const processed: AnalysisResult = {
+      ...result,
+      transcript: replaceSpeakerNames(result.transcript, mappings),
+      summary: replaceSpeakerNames(result.summary, mappings),
+      mom: result.mom ? {
+        ...result.mom,
+        meeting_purpose: replaceSpeakerNames(result.mom.meeting_purpose, mappings),
+        attendees: result.mom.attendees.map(attendee => replaceSpeakerNames(attendee, mappings)),
+        key_decisions: result.mom.key_decisions.map(decision => replaceSpeakerNames(decision, mappings)),
+        resolutions: result.mom.resolutions.map(resolution => replaceSpeakerNames(resolution, mappings)),
+        next_meeting: result.mom.next_meeting ? replaceSpeakerNames(result.mom.next_meeting, mappings) : result.mom.next_meeting
+      } : undefined,
+      tasks: result.tasks.map(task => ({
+        ...task,
+        action: replaceSpeakerNames(task.action, mappings),
+        assigned_to: replaceSpeakerNames(task.assigned_to, mappings),
+        context: task.context ? replaceSpeakerNames(task.context, mappings) : task.context,
+        deliverable: task.deliverable ? replaceSpeakerNames(task.deliverable, mappings) : task.deliverable
+      })),
+      participants: result.participants?.map(participant => ({
+        ...participant,
+        speaker_id: replaceSpeakerNames(participant.speaker_id, mappings),
+        key_contributions: participant.key_contributions?.map(contrib => replaceSpeakerNames(contrib, mappings)),
+        expertise_areas: participant.expertise_areas?.map(area => replaceSpeakerNames(area, mappings))
+      })),
+      topics: result.topics?.map(topic => ({
+        ...topic,
+        key_points: topic.key_points?.map(point => replaceSpeakerNames(point, mappings)),
+        decisions_made: topic.decisions_made?.map(decision => replaceSpeakerNames(decision, mappings)),
+        open_questions: topic.open_questions?.map(question => replaceSpeakerNames(question, mappings))
+      }))
+    };
+    
+    setProcessedResult(processed);
+  };
   const downloadMarkdown = async () => {
     try {
       const response = await fetch('/api/export-meeting', {
@@ -47,7 +74,7 @@ function ResultsDisplay({ result }: ResultsDisplayProps) {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(result),
+        body: JSON.stringify(processedResult),
       });
 
       if (!response.ok) {
@@ -65,8 +92,38 @@ function ResultsDisplay({ result }: ResultsDisplayProps) {
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
     } catch (error) {
-      console.error('Error downloading report:', error);
+      clientLoggers.ui.downloadError(error);
       alert('Failed to download report. Please try again.');
+    }
+  };
+
+  const downloadTranscript = async () => {
+    try {
+      const response = await fetch('/api/export-transcript', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ transcript: processedResult.transcript }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to export transcript');
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = url;
+      a.download = `meeting-transcript-${new Date().toISOString().slice(0, 10)}.txt`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (error) {
+      clientLoggers.ui.downloadError(error);
+      alert('Failed to download transcript. Please try again.');
     }
   };
 
@@ -75,38 +132,117 @@ function ResultsDisplay({ result }: ResultsDisplayProps) {
       <div className="bg-gray-900/50 backdrop-blur-sm border border-gray-800 rounded-2xl p-8">
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-2xl font-light text-white">Meeting Analysis</h2>
-          <button
-            onClick={downloadMarkdown}
-            className="px-6 py-3 bg-gradient-to-r from-violet-600 to-indigo-600 text-white rounded-xl hover:from-violet-700 hover:to-indigo-700 transition-all duration-200 flex items-center space-x-3 group"
-          >
-            <svg className="w-5 h-5 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-            <span className="font-medium">Export Report</span>
-          </button>
+          <div className="flex space-x-3">
+            <button
+              onClick={downloadTranscript}
+              className="px-4 py-2 bg-gray-700 text-gray-200 rounded-lg hover:bg-gray-600 transition-all duration-200 flex items-center space-x-2 text-sm"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              <span>Transcript</span>
+            </button>
+            <button
+              onClick={downloadMarkdown}
+              className="px-6 py-3 bg-gradient-to-r from-violet-600 to-indigo-600 text-white rounded-xl hover:from-violet-700 hover:to-indigo-700 transition-all duration-200 flex items-center space-x-3 group"
+            >
+              <svg className="w-5 h-5 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              <span className="font-medium">Export Report</span>
+            </button>
+          </div>
         </div>
       </div>
 
+      {result.speaker_identification && (
+        <SpeakerMapping 
+          speakerIdentification={result.speaker_identification}
+          onSpeakerMappingUpdate={handleSpeakerMappingUpdate}
+        />
+      )}
+
       <div className="bg-gray-900/30 backdrop-blur-sm border border-gray-800/50 rounded-2xl p-8">
         <h2 className="text-xl font-light text-gray-100 mb-6">Executive Summary</h2>
-        <p className="text-gray-300 leading-relaxed text-lg">{result.summary}</p>
+        <p className="text-gray-300 leading-relaxed text-lg">{processedResult.summary}</p>
       </div>
 
-      {result.meeting_metadata && (
+      {processedResult.mom && (
+        <div className="bg-gray-900/30 backdrop-blur-sm border border-gray-800/50 rounded-2xl p-8">
+          <h2 className="text-xl font-light text-gray-100 mb-6">Minutes of Meeting</h2>
+          <div className="space-y-6">
+            <div>
+              <h3 className="text-lg font-medium text-gray-200 mb-3">Meeting Purpose</h3>
+              <p className="text-gray-300">{processedResult.mom.meeting_purpose}</p>
+            </div>
+            
+            {processedResult.mom.attendees && processedResult.mom.attendees.length > 0 && (
+              <div>
+                <h3 className="text-lg font-medium text-gray-200 mb-3">Attendees</h3>
+                <ul className="text-gray-300 space-y-1">
+                  {processedResult.mom.attendees.map((attendee, i) => (
+                    <li key={i} className="flex items-start">
+                      <span className="text-violet-400 mr-2">•</span>
+                      {attendee}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {processedResult.mom.key_decisions && processedResult.mom.key_decisions.length > 0 && (
+              <div>
+                <h3 className="text-lg font-medium text-gray-200 mb-3">Key Decisions</h3>
+                <ul className="text-gray-300 space-y-2">
+                  {processedResult.mom.key_decisions.map((decision, i) => (
+                    <li key={i} className="flex items-start">
+                      <span className="text-green-400 mr-2">✓</span>
+                      {decision}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {processedResult.mom.resolutions && processedResult.mom.resolutions.length > 0 && (
+              <div>
+                <h3 className="text-lg font-medium text-gray-200 mb-3">Resolutions</h3>
+                <ul className="text-gray-300 space-y-2">
+                  {processedResult.mom.resolutions.map((resolution, i) => (
+                    <li key={i} className="flex items-start">
+                      <span className="text-blue-400 mr-2">→</span>
+                      {resolution}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {processedResult.mom.next_meeting && (
+              <div>
+                <h3 className="text-lg font-medium text-gray-200 mb-3">Next Meeting</h3>
+                <p className="text-gray-300">{processedResult.mom.next_meeting}</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {processedResult.meeting_metadata && (
         <div className="bg-gray-900/30 backdrop-blur-sm border border-gray-800/50 rounded-2xl p-8">
           <h2 className="text-xl font-light text-gray-100 mb-6">Meeting Overview</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="text-center p-6 bg-gray-800/30 rounded-xl border border-gray-700/50">
               <p className="text-sm text-gray-400 mb-2">Tone</p>
-              <p className="font-medium text-white text-lg">{result.meeting_metadata.overall_tone}</p>
+              <p className="font-medium text-white text-lg">{processedResult.meeting_metadata.overall_tone}</p>
             </div>
             <div className="text-center p-6 bg-gray-800/30 rounded-xl border border-gray-700/50">
               <p className="text-sm text-gray-400 mb-2">Productivity</p>
-              <p className="font-medium text-white text-lg">{result.meeting_metadata.productivity_level}</p>
+              <p className="font-medium text-white text-lg">{processedResult.meeting_metadata.productivity_level}</p>
             </div>
             <div className="text-center p-6 bg-gray-800/30 rounded-xl border border-gray-700/50">
               <p className="text-sm text-gray-400 mb-2">Speakers</p>
-              <p className="font-medium text-white text-lg">{result.meeting_metadata.total_speakers}</p>
+              <p className="font-medium text-white text-lg">{processedResult.meeting_metadata.total_speakers}</p>
             </div>
           </div>
         </div>
@@ -115,7 +251,7 @@ function ResultsDisplay({ result }: ResultsDisplayProps) {
       <div className="bg-gray-900/30 backdrop-blur-sm border border-gray-800/50 rounded-2xl p-8">
         <h2 className="text-xl font-light text-gray-100 mb-6">Action Items</h2>
         <div className="space-y-4">
-          {result.tasks.map((task, index) => (
+          {processedResult.tasks.map((task, index) => (
             <div key={index} className="border border-gray-700/50 rounded-xl p-6 bg-gray-800/20">
               <div className="flex items-start space-x-4">
                 <input type="checkbox" className="mt-1 h-5 w-5 text-violet-500 bg-gray-800 border-gray-600 rounded focus:ring-violet-500 focus:ring-2" />
@@ -147,6 +283,11 @@ function ResultsDisplay({ result }: ResultsDisplayProps) {
                         <span className="font-medium text-gray-200">Context:</span> {task.context}
                       </p>
                     )}
+                    {task.deliverable && (
+                      <p className="text-sm text-gray-300">
+                        <span className="font-medium text-gray-200">Deliverable:</span> {task.deliverable}
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
@@ -155,21 +296,21 @@ function ResultsDisplay({ result }: ResultsDisplayProps) {
         </div>
       </div>
 
-      {result.participants && result.participants.length > 0 && (
+      {processedResult.participants && processedResult.participants.length > 0 && (
         <div className="bg-gray-900/30 backdrop-blur-sm border border-gray-800/50 rounded-2xl p-8">
           <h2 className="text-xl font-light text-gray-100 mb-6">Participants</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {result.participants.map((participant, index) => (
+            {processedResult.participants.map((participant, index) => (
               <div key={index} className="border border-gray-700/50 rounded-xl p-6 bg-gray-800/20">
                 <h3 className="font-medium text-gray-100 mb-3 text-lg">{participant.speaker_id}</h3>
                 <p className="text-sm text-gray-300 mb-4">
                   <span className="font-medium text-gray-200">Participation:</span> {participant.participation_level}
                 </p>
-                {participant.key_contributions.length > 0 && (
+                {participant.key_contributions && participant.key_contributions.length > 0 && (
                   <div>
                     <p className="text-sm font-medium text-gray-200 mb-2">Key Contributions:</p>
                     <ul className="text-sm text-gray-300 space-y-1">
-                      {participant.key_contributions.map((contribution, i) => (
+                      {participant.key_contributions?.map((contribution, i) => (
                         <li key={i} className="flex items-start">
                           <span className="text-violet-400 mr-2">•</span>
                           {contribution}
@@ -184,22 +325,22 @@ function ResultsDisplay({ result }: ResultsDisplayProps) {
         </div>
       )}
 
-      {result.topics && result.topics.length > 0 && (
+      {processedResult.topics && processedResult.topics.length > 0 && (
         <div className="bg-gray-900/30 backdrop-blur-sm border border-gray-800/50 rounded-2xl p-8">
           <h2 className="text-xl font-light text-gray-100 mb-6">Topics Discussed</h2>
           <div className="space-y-6">
-            {result.topics.map((topic, index) => (
+            {processedResult.topics?.map((topic, index) => (
               <div key={index} className="border border-gray-700/50 rounded-xl p-6 bg-gray-800/20">
                 <h3 className="font-medium text-gray-100 mb-3 text-lg">{topic.topic}</h3>
                 <p className="text-sm text-gray-300 mb-4">
                   <span className="font-medium text-gray-200">Emphasis:</span> {topic.duration_emphasis}
                 </p>
                 
-                {topic.key_points.length > 0 && (
+                {topic.key_points && topic.key_points.length > 0 && (
                   <div className="mb-4">
                     <p className="text-sm font-medium text-gray-200 mb-2">Key Points:</p>
                     <ul className="text-sm text-gray-300 space-y-1">
-                      {topic.key_points.map((point, i) => (
+                      {topic.key_points?.map((point, i) => (
                         <li key={i} className="flex items-start">
                           <span className="text-violet-400 mr-2">•</span>
                           {point}
@@ -209,11 +350,11 @@ function ResultsDisplay({ result }: ResultsDisplayProps) {
                   </div>
                 )}
 
-                {topic.decisions_made.length > 0 && (
+                {topic.decisions_made && topic.decisions_made.length > 0 && (
                   <div className="mb-4">
                     <p className="text-sm font-medium text-gray-200 mb-2">Decisions Made:</p>
                     <ul className="text-sm text-gray-300 space-y-1">
-                      {topic.decisions_made.map((decision, i) => (
+                      {topic.decisions_made?.map((decision, i) => (
                         <li key={i} className="flex items-start">
                           <span className="text-green-400 mr-2">✓</span>
                           {decision}
@@ -223,11 +364,11 @@ function ResultsDisplay({ result }: ResultsDisplayProps) {
                   </div>
                 )}
 
-                {topic.open_questions.length > 0 && (
+                {topic.open_questions && topic.open_questions.length > 0 && (
                   <div>
                     <p className="text-sm font-medium text-gray-200 mb-2">Open Questions:</p>
                     <ul className="text-sm text-gray-300 space-y-1">
-                      {topic.open_questions.map((question, i) => (
+                      {topic.open_questions?.map((question, i) => (
                         <li key={i} className="flex items-start">
                           <span className="text-yellow-400 mr-2">?</span>
                           {question}
@@ -245,7 +386,7 @@ function ResultsDisplay({ result }: ResultsDisplayProps) {
       <div className="bg-gray-900/30 backdrop-blur-sm border border-gray-800/50 rounded-2xl p-8">
         <h2 className="text-xl font-light text-gray-100 mb-6">Full Transcript</h2>
         <div className="bg-gray-950/50 rounded-xl p-6 max-h-96 overflow-y-auto border border-gray-800/30">
-          <pre className="whitespace-pre-wrap text-sm text-gray-300 font-mono leading-relaxed">{result.transcript}</pre>
+          <pre className="whitespace-pre-wrap text-sm text-gray-300 font-mono leading-relaxed">{processedResult.transcript}</pre>
         </div>
       </div>
     </div>
@@ -292,7 +433,7 @@ export default function Home() {
       setError(null);
     } catch (err) {
       setError('Failed to access microphone. Please check permissions.');
-      console.error('Error starting recording:', err);
+      clientLoggers.recording.error(err);
     }
   };
 
@@ -306,12 +447,7 @@ export default function Home() {
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
-      console.log('📁 File selected:', {
-        name: file.name,
-        type: file.type,
-        size: file.size,
-        sizeMB: (file.size / (1024 * 1024)).toFixed(2) + 'MB'
-      });
+      clientLoggers.file.selected(file.name, file.size, file.type);
       
       if (file.size > 200 * 1024 * 1024) {
         setError('File size must be less than 200MB');
@@ -371,10 +507,7 @@ export default function Home() {
       // Check if audio should be compressed
       if (shouldCompressAudio(audioToAnalyze)) {
         setIsCompressing(true);
-        console.log('Compressing audio...', {
-          originalSize: formatFileSize(audioToAnalyze.size),
-          type: audioToAnalyze.type || 'unknown'
-        });
+        clientLoggers.file.compressionStart(audioToAnalyze.size);
 
         try {
           const compressionOptions = {
@@ -389,13 +522,13 @@ export default function Home() {
           finalAudio = result.compressedBlob;
           fileName = fileName.replace(/\.[^/.]+$/, '') + '.mp3'; // Change extension to mp3
 
-          console.log('Compression completed:', {
-            originalSize: formatFileSize(result.originalSize),
-            compressedSize: formatFileSize(result.compressedSize),
-            ratio: `${result.compressionRatio.toFixed(2)}x smaller`
+          clientLoggers.file.compressionComplete({
+            originalSize: result.originalSize,
+            compressedSize: result.compressedSize,
+            compressionRatio: result.compressionRatio
           });
         } catch (compressionError) {
-          console.warn('Audio compression failed, using original file:', compressionError);
+          clientLoggers.file.compressionFailed(compressionError);
           // Continue with original file if compression fails
         } finally {
           setIsCompressing(false);
@@ -411,14 +544,28 @@ export default function Home() {
       });
 
       if (!response.ok) {
-        throw new Error(`Failed to analyze meeting: ${response.statusText}`);
+        let errorMessage = `Failed to analyze meeting: ${response.status} ${response.statusText}`;
+        try {
+          const errorData = await response.json();
+          if (errorData.error) {
+            errorMessage = errorData.error;
+          }
+        } catch {
+          // Fall back to status text if JSON parsing fails
+        }
+        throw new Error(errorMessage);
       }
 
       const result = await response.json();
       setAnalysisResult(result);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to analyze meeting');
-      console.error('Error analyzing meeting:', err);
+      const errorMessage = err instanceof Error ? err.message : 'Failed to analyze meeting';
+      setError(errorMessage);
+      clientLoggers.api.error('/api/process-meeting', 'POST', { 
+        error: errorMessage, 
+        originalError: err,
+        timestamp: new Date().toISOString()
+      });
     } finally {
       setIsLoading(false);
       setIsCompressing(false);

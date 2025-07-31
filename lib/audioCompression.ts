@@ -1,3 +1,6 @@
+import { log } from './logger';
+import type { CompressionResult } from './types/meeting.types';
+
 export interface CompressionOptions {
   bitRate?: number; // kbps (default: 128)
   sampleRate?: number; // Hz (default: 44100) 
@@ -5,12 +8,7 @@ export interface CompressionOptions {
   quality?: number; // 0-9, lower is better quality (default: 3)
 }
 
-export interface CompressionResult {
-  compressedBlob: Blob;
-  originalSize: number;
-  compressedSize: number;
-  compressionRatio: number;
-}
+export { type CompressionResult };
 
 export async function compressAudio(
   audioBlob: Blob,
@@ -139,7 +137,7 @@ export async function compressAudio(
     });
     
   } catch (error) {
-    console.error('Audio compression failed:', error);
+    log.error({ error }, 'Audio compression failed');
     throw new Error(`Audio compression failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
