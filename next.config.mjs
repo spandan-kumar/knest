@@ -10,6 +10,9 @@ const pwa = withPWA({
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
+  experimental: {
+    serverComponentsExternalPackages: [],
+  },
 };
 
 export default pwa(nextConfig);
