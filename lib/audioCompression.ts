@@ -1,5 +1,3 @@
-import lamejs from 'lamejs';
-
 export interface CompressionOptions {
   bitRate?: number; // kbps (default: 128)
   sampleRate?: number; // Hz (default: 44100) 
@@ -26,6 +24,17 @@ export async function compressAudio(
   } = options;
 
   try {
+    // For browser compatibility, we'll use MediaRecorder with different codecs
+    // If the original is already compressed (MP3, AAC), return as-is
+    if (audioBlob.type === 'audio/mp3' || audioBlob.type === 'audio/aac' || audioBlob.type === 'audio/mpeg') {
+      return {
+        compressedBlob: audioBlob,
+        originalSize: audioBlob.size,
+        compressedSize: audioBlob.size,
+        compressionRatio: 1
+      };
+    }
+
     // Convert blob to array buffer
     const arrayBuffer = await audioBlob.arrayBuffer();
     
@@ -34,9 +43,6 @@ export async function compressAudio(
     
     // Decode audio data
     const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-    
-    // Resample to target sample rate if needed
-    const targetSampleRate = Math.min(sampleRate, audioBuffer.sampleRate);
     
     // Get audio data (convert to mono if specified)
     let audioData: Float32Array;
@@ -53,50 +59,84 @@ export async function compressAudio(
     }
     
     // Resample if needed
-    if (targetSampleRate !== audioBuffer.sampleRate) {
-      audioData = resampleAudio(audioData, audioBuffer.sampleRate, targetSampleRate);
+    if (sampleRate !== audioBuffer.sampleRate) {
+      audioData = resampleAudio(audioData, audioBuffer.sampleRate, sampleRate);
     }
     
-    // Convert float samples to 16-bit PCM
-    const samples = new Int16Array(audioData.length);
-    for (let i = 0; i < audioData.length; i++) {
-      const sample = Math.max(-1, Math.min(1, audioData[i]));
-      samples[i] = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
-    }
+    // Create a new audio buffer with the processed data
+    const processedBuffer = audioContext.createBuffer(channels, audioData.length, sampleRate);
+    processedBuffer.copyToChannel(audioData, 0);
     
-    // Initialize MP3 encoder
-    const mp3encoder = new lamejs.Mp3Encoder(channels, targetSampleRate, bitRate);
-    const mp3Data: Int8Array[] = [];
+    // Create a MediaStreamSource from the audio buffer
+    const source = audioContext.createBufferSource();
+    source.buffer = processedBuffer;
     
-    // Encode in chunks
-    const chunkSize = 1152; // Standard MP3 frame size
-    for (let i = 0; i < samples.length; i += chunkSize) {
-      const chunk = samples.subarray(i, i + chunkSize);
-      const mp3buf = mp3encoder.encodeBuffer(chunk);
-      if (mp3buf.length > 0) {
-        mp3Data.push(new Int8Array(mp3buf));
+    // Create MediaRecorder with appropriate codec
+    const stream = audioContext.createMediaStreamDestination();
+    source.connect(stream);
+    
+    // Try different codecs based on browser support
+    const codecs = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/mp4',
+      'audio/wav'
+    ];
+    
+    let mediaRecorder: MediaRecorder | null = null;
+    let selectedCodec = '';
+    
+    for (const codec of codecs) {
+      if (MediaRecorder.isTypeSupported(codec)) {
+        mediaRecorder = new MediaRecorder(stream.stream, {
+          mimeType: codec,
+          audioBitsPerSecond: bitRate * 1000
+        });
+        selectedCodec = codec;
+        break;
       }
     }
     
-    // Finalize encoding
-    const mp3buf = mp3encoder.flush();
-    if (mp3buf.length > 0) {
-      mp3Data.push(new Int8Array(mp3buf));
+    if (!mediaRecorder) {
+      throw new Error('No supported audio codec found');
     }
     
-    // Create blob from MP3 data
-    const compressedBlob = new Blob(mp3Data, { type: 'audio/mp3' });
+    const chunks: Blob[] = [];
     
-    const originalSize = audioBlob.size;
-    const compressedSize = compressedBlob.size;
-    const compressionRatio = originalSize / compressedSize;
-    
-    return {
-      compressedBlob,
-      originalSize,
-      compressedSize,
-      compressionRatio
-    };
+    return new Promise((resolve, reject) => {
+      mediaRecorder!.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          chunks.push(event.data);
+        }
+      };
+      
+      mediaRecorder!.onstop = () => {
+        const compressedBlob = new Blob(chunks, { type: selectedCodec });
+        const originalSize = audioBlob.size;
+        const compressedSize = compressedBlob.size;
+        const compressionRatio = originalSize / compressedSize;
+        
+        resolve({
+          compressedBlob,
+          originalSize,
+          compressedSize,
+          compressionRatio
+        });
+      };
+      
+      mediaRecorder!.onerror = (event) => {
+        reject(new Error(`MediaRecorder error: ${event}`));
+      };
+      
+      // Start recording
+      mediaRecorder!.start();
+      source.start();
+      
+      // Stop when the audio ends
+      source.onended = () => {
+        mediaRecorder!.stop();
+      };
+    });
     
   } catch (error) {
     console.error('Audio compression failed:', error);
