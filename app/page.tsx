@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef } from 'react';
+import { compressAudio, shouldCompressAudio, formatFileSize, type CompressionResult } from '@/lib/audioCompression';
 
 interface AnalysisResult {
   summary: string;
@@ -259,6 +260,8 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [activeTab, setActiveTab] = useState<'record' | 'upload'>('record');
+  const [isCompressing, setIsCompressing] = useState(false);
+  const [compressionResult, setCompressionResult] = useState<CompressionResult | null>(null);
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -339,6 +342,7 @@ export default function Home() {
     setAudioBlob(null);
     setUploadedFile(null);
     setError(null);
+    setCompressionResult(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -350,11 +354,48 @@ export default function Home() {
 
     setIsLoading(true);
     setError(null);
+    setCompressionResult(null);
 
     try {
+      let finalAudio = audioToAnalyze;
+      let fileName = uploadedFile ? uploadedFile.name : 'recording.wav';
+
+      // Check if audio should be compressed
+      if (shouldCompressAudio(audioToAnalyze)) {
+        setIsCompressing(true);
+        console.log('Compressing audio...', {
+          originalSize: formatFileSize(audioToAnalyze.size),
+          type: audioToAnalyze.type || 'unknown'
+        });
+
+        try {
+          const compressionOptions = {
+            bitRate: 128, // 128 kbps for good quality/size balance
+            sampleRate: 44100,
+            channels: 1, // Mono for smaller file size
+            quality: 3 // Good quality
+          };
+
+          const result = await compressAudio(audioToAnalyze, compressionOptions);
+          setCompressionResult(result);
+          finalAudio = result.compressedBlob;
+          fileName = fileName.replace(/\.[^/.]+$/, '') + '.mp3'; // Change extension to mp3
+
+          console.log('Compression completed:', {
+            originalSize: formatFileSize(result.originalSize),
+            compressedSize: formatFileSize(result.compressedSize),
+            ratio: `${result.compressionRatio.toFixed(2)}x smaller`
+          });
+        } catch (compressionError) {
+          console.warn('Audio compression failed, using original file:', compressionError);
+          // Continue with original file if compression fails
+        } finally {
+          setIsCompressing(false);
+        }
+      }
+
       const formData = new FormData();
-      const fileName = uploadedFile ? uploadedFile.name : 'recording.wav';
-      formData.append('audio', audioToAnalyze, fileName);
+      formData.append('audio', finalAudio, fileName);
 
       const response = await fetch('/api/process-meeting', {
         method: 'POST',
@@ -372,6 +413,7 @@ export default function Home() {
       console.error('Error analyzing meeting:', err);
     } finally {
       setIsLoading(false);
+      setIsCompressing(false);
     }
   };
 
@@ -507,9 +549,44 @@ export default function Home() {
                   </p>
                 </div>
                 {uploadedFile && (
-                  <p className="text-sm text-green-300">{uploadedFile.name}</p>
+                  <div className="text-center">
+                    <p className="text-sm text-green-300">{uploadedFile.name}</p>
+                    <p className="text-xs text-green-400/70">Size: {formatFileSize(uploadedFile.size)}</p>
+                  </div>
+                )}
+                {audioBlob && (
+                  <div className="text-center">
+                    <p className="text-xs text-green-400/70">Size: {formatFileSize(audioBlob.size)}</p>
+                  </div>
                 )}
               </div>
+
+              {compressionResult && (
+                <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-6 mb-6">
+                  <div className="flex items-center justify-center space-x-3 mb-3">
+                    <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center">
+                      <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                      </svg>
+                    </div>
+                    <p className="text-blue-400 font-medium">Audio Compressed Successfully</p>
+                  </div>
+                  <div className="grid grid-cols-3 gap-4 text-center text-sm">
+                    <div>
+                      <p className="text-blue-300 font-medium">Original</p>
+                      <p className="text-blue-400/80">{formatFileSize(compressionResult.originalSize)}</p>
+                    </div>
+                    <div>
+                      <p className="text-blue-300 font-medium">Compressed</p>
+                      <p className="text-blue-400/80">{formatFileSize(compressionResult.compressedSize)}</p>
+                    </div>
+                    <div>
+                      <p className="text-blue-300 font-medium">Reduction</p>
+                      <p className="text-blue-400/80">{compressionResult.compressionRatio.toFixed(2)}x</p>
+                    </div>
+                  </div>
+                </div>
+              )}
               
               <div className="flex items-center justify-center space-x-6">
                 <button
@@ -524,7 +601,7 @@ export default function Home() {
                   {isLoading ? (
                     <>
                       <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                      <span>Analyzing...</span>
+                      <span>{isCompressing ? 'Compressing...' : 'Analyzing...'}</span>
                     </>
                   ) : (
                     <>
@@ -558,7 +635,12 @@ export default function Home() {
           <div className="bg-violet-500/10 border border-violet-500/30 rounded-xl p-6 mb-8">
             <div className="flex items-center space-x-3">
               <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-violet-400"></div>
-              <p className="text-violet-400">Analyzing your meeting with advanced AI...</p>
+              <p className="text-violet-400">
+                {isCompressing 
+                  ? 'Compressing audio for faster processing...' 
+                  : 'Analyzing your meeting with advanced AI...'
+                }
+              </p>
             </div>
           </div>
         )}
