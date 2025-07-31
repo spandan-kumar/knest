@@ -1,0 +1,14 @@
+name: knest
+type: application
+repository: https://github.com/spandan-kumar/knest
+branch: main
+port: 3000
+buildPack: dockerfile
+dockerfilePath: ./Dockerfile
+healthCheckPath: /api/health
+environmentVariables:
+  - GEMINI_API_KEY
+  - NODE_ENV=production
+  - NEXT_TELEMETRY_DISABLED=1
+  - PORT=3000
+  - HOSTNAME=0.0.0.0 

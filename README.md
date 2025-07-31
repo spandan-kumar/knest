@@ -15,9 +15,13 @@ AI-powered meeting assistant with audio recording and analysis using Google's Ge
 
 ## Setup
 
+### Local Development
+
 1. **Clone and install dependencies:**
    ```bash
-   npm install
+   git clone https://github.com/spandan-kumar/knest.git
+   cd knest
+   bun install
    ```
 
 2. **Configure Gemini API:**
@@ -30,18 +34,31 @@ AI-powered meeting assistant with audio recording and analysis using Google's Ge
 
 3. **Run the development server:**
    ```bash
-   npm run dev
+   bun run dev
    ```
 
 4. **Open [http://localhost:3000](http://localhost:3000)** in your browser
 
+### Docker Development
+
+```bash
+# Build and run with Docker Compose
+bun run docker:compose
+
+# Or build and run manually
+bun run docker:build
+bun run docker:run
+```
+
 ## Tech Stack
 
 - **Framework**: Next.js 15 with App Router
-- **Styling**: Tailwind CSS 4.0
-- **AI**: Google Gemini 2.0 Flash (via Gemini API)
+- **Runtime**: Bun (fast JavaScript runtime)
+- **Styling**: Tailwind CSS 3.4
+- **AI**: Google Gemini 2.5 Flash (via Gemini API)
 - **PWA**: next-pwa for service worker generation
-- **File Handling**: formidable for multipart uploads
+- **File Handling**: Native FormData API
+- **Containerization**: Docker with multi-stage builds
 
 ## Usage
 
@@ -73,11 +90,40 @@ AI-powered meeting assistant with audio recording and analysis using Google's Ge
 
 ## Deployment
 
-This app can be deployed to any platform that supports Next.js:
+### Coolify (Self-Hosted)
+
+1. **In Coolify Dashboard:**
+   - Click "New Resource" → "Application"
+   - Select "GitHub" as source
+   - Choose your `knest` repository
+   - Set branch to `main`
+
+2. **Configure Build Settings:**
+   - Build Pack: `Dockerfile`
+   - Dockerfile Path: `./Dockerfile`
+   - Port: `3000`
+   - Health Check Path: `/api/health`
+
+3. **Set Environment Variables:**
+   ```
+   GEMINI_API_KEY=your-api-key-here
+   NODE_ENV=production
+   NEXT_TELEMETRY_DISABLED=1
+   ```
+
+4. **Deploy:**
+   - Click "Deploy" to start the build process
+   - Monitor logs for any issues
+
+### Other Platforms
+
+This app can be deployed to any platform that supports Docker:
 
 - **Vercel**: Zero-config deployment
-- **Netlify**: Static hosting with serverless functions
 - **Railway**: Easy deployment with environment variable support
+- **DigitalOcean App Platform**: Docker container support
+- **AWS ECS**: Container orchestration
+- **Google Cloud Run**: Serverless containers
 
 ### Environment Variables
 
