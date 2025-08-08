@@ -11,6 +11,11 @@ export interface AIAnalysisRequest {
   audioFile: File;
   audioBuffer: Buffer;
   prompt: string;
+  voiceProfiles?: Array<{
+    name: string;
+    sampleText: string;
+    confidence: number;
+  }>;
 }
 
 import type { AnalysisResult } from '../types/meeting.types';
@@ -39,7 +44,7 @@ export class GeminiAIService {
   }
 
   async analyzeAudio(request: AIAnalysisRequest): Promise<AIAnalysisResult> {
-    const { audioFile, audioBuffer, prompt } = request;
+    const { audioFile, audioBuffer, prompt, voiceProfiles } = request;
     
     // Validate inputs
     if (!audioFile || !audioBuffer || !prompt) {
@@ -60,13 +65,18 @@ export class GeminiAIService {
       setTimeout(() => reject(new Error(`Gemini API call timed out after ${this.config.timeoutMs / 1000} seconds`)), this.config.timeoutMs)
     );
 
-    log.info(`⏱️ Starting Gemini API call with ${this.config.timeoutMs / 1000}-second timeout...`);
+    log.info({ timeout: this.config.timeoutMs }, `⏱️ Starting Gemini API call with ${this.config.timeoutMs / 1000}-second timeout...`);
 
     try {
+      // Create enhanced prompt with voice profiles
+      const enhancedPrompt = voiceProfiles && voiceProfiles.length > 0 
+        ? GeminiAIService.createPrompt(voiceProfiles)
+        : prompt;
+
       // Make the request to Gemini with timeout
       const result = await Promise.race([
         this.model.generateContent([
-          prompt,
+          enhancedPrompt,
           {
             inlineData: {
               mimeType: audioFile.type,
@@ -99,10 +109,10 @@ export class GeminiAIService {
   }
 
   private parseAIResponse(text: string): AIAnalysisResult {
-    log.debug('🔧 Starting JSON parsing...');
+    log.debug({}, '🔧 Starting JSON parsing...');
 
     try {
-      log.debug('🔍 Looking for JSON in response...');
+      log.debug({}, '🔍 Looking for JSON in response...');
       
       // Clean the response text to extract just the JSON
       const jsonMatch = text.match(/\{[\s\S]*\}/);
@@ -114,7 +124,7 @@ export class GeminiAIService {
       log.debug({ length: jsonMatch[0].length }, '✅ JSON pattern found');
       log.debug({ preview: jsonMatch[0].substring(0, 300) }, '🔍 JSON preview');
 
-      log.debug('⚙️ Attempting to parse JSON...');
+      log.debug({}, '⚙️ Attempting to parse JSON...');
       const parsedResult = JSON.parse(jsonMatch[0]);
       
       log.debug({ keys: Object.keys(parsedResult) }, '✅ JSON parsed successfully');
@@ -130,10 +140,10 @@ export class GeminiAIService {
   }
 
   private validateAIResponse(parsedResult: any): void {
-    log.debug('🔍 Validating response structure...');
+    log.debug({}, '🔍 Validating response structure...');
 
-    // Validate the essential response structure (mom is optional)
-    const requiredFields = ['summary', 'tasks', 'transcript'];
+    // Validate the essential response structure (mom is optional, but speaker_identification is required)
+    const requiredFields = ['summary', 'tasks', 'transcript', 'speaker_identification'];
     const missingFields = requiredFields.filter(field => !parsedResult[field]);
 
     if (missingFields.length > 0) {
@@ -151,11 +161,32 @@ export class GeminiAIService {
       throw new Error(`Invalid response structure from AI. Missing required fields: ${missingFields.join(', ')}`);
     }
 
+    // Additional validation for speaker_identification structure
+    if (parsedResult.speaker_identification) {
+      if (!parsedResult.speaker_identification.total_speakers || !parsedResult.speaker_identification.speaker_hints) {
+        log.error({
+          speaker_identification: parsedResult.speaker_identification
+        }, '❌ Invalid speaker_identification structure');
+        
+        throw new Error('Invalid speaker_identification structure from AI. Missing total_speakers or speaker_hints.');
+      }
+      
+      // Ensure speaker_hints is an array
+      if (!Array.isArray(parsedResult.speaker_identification.speaker_hints)) {
+        log.error({
+          speaker_hints_type: typeof parsedResult.speaker_identification.speaker_hints
+        }, '❌ speaker_hints is not an array');
+        
+        throw new Error('Invalid speaker_identification structure: speaker_hints must be an array.');
+      }
+    }
+
     log.info({
       availableFields: Object.keys(parsedResult),
+      speakerCount: parsedResult.speaker_identification?.total_speakers,
+      speakerHintsCount: parsedResult.speaker_identification?.speaker_hints?.length,
       optionalFields: {
         mom: !!parsedResult.mom,
-        speaker_identification: !!parsedResult.speaker_identification,
         participants: !!parsedResult.participants,
         topics: !!parsedResult.topics,
         meeting_metadata: !!parsedResult.meeting_metadata
@@ -163,14 +194,35 @@ export class GeminiAIService {
     }, '✅ Response validation passed');
   }
 
-  static createPrompt(): string {
-    return `You are an expert meeting assistant with advanced audio analysis capabilities. Analyze the provided audio recording comprehensively and extract maximum value from the content.
+  static createPrompt(voiceProfiles?: Array<{name: string; sampleText: string; confidence: number}>): string {
+    let voiceProfilesSection = '';
+    
+    if (voiceProfiles && voiceProfiles.length > 0) {
+      voiceProfilesSection = `
+## VOICE PROFILES FOR SPEAKER IDENTIFICATION
+You have access to voice profiles that can help with speaker identification. Use these as reference for matching speakers in the audio:
 
+${voiceProfiles.map((profile, index) => `
+**Profile ${index + 1}: ${profile.name}**
+- Sample text: "${profile.sampleText}"
+- Confidence level: ${(profile.confidence * 100).toFixed(0)}%
+- Use this profile to help identify when "${profile.name}" is speaking in the audio
+`).join('')}
+
+**IMPORTANT**: Use these voice profiles to improve speaker identification accuracy. When you detect speech patterns that might match these profiles, suggest the corresponding name in the speaker_identification section.
+
+`;
+    }
+
+    return `You are an expert meeting assistant with advanced audio analysis capabilities. Analyze the provided audio recording comprehensively and extract maximum value from the content.
+${voiceProfilesSection}
 ## CRITICAL ANALYSIS REQUIREMENTS:
 
-### 1. DETAILED TRANSCRIPT
+### 1. DETAILED TRANSCRIPT WITH SPEAKER DIARIZATION (MANDATORY)
 - Generate a complete, word-for-word transcript
-- Accurately identify and label each unique speaker (Speaker 1, Speaker 2, etc.)
+- **MANDATORY**: Accurately identify and label each unique speaker (Speaker 1, Speaker 2, etc.)
+- **MANDATORY**: Distinguish between different voices even if only subtle differences exist
+- If only one speaker is detected, still label as "Speaker 1"
 - Include timestamps for major topic changes
 - Preserve emotional context and emphasis where evident
 - Note any background sounds, interruptions, or audio quality issues
@@ -196,14 +248,15 @@ export class GeminiAIService {
 - Concrete next steps that require execution
 
 
-### 5. SPEAKER IDENTIFICATION & PARTICIPANT ANALYSIS
-- Analyze conversation context for speaker identification clues
-- Extract names mentioned in conversation (introductions, name mentions, role references)
-- Identify job titles, departments, or roles mentioned
-- Note speaking patterns and participation levels
-- Note expertise areas demonstrated by each speaker
-- Highlight key contributions from each participant
-- Provide concise hints for speaker identification based on conversation context
+### 5. SPEAKER IDENTIFICATION & PARTICIPANT ANALYSIS (MANDATORY)
+- **MANDATORY**: Analyze conversation context for speaker identification clues
+- **MANDATORY**: Extract names mentioned in conversation (introductions, name mentions, role references)
+- **MANDATORY**: Identify job titles, departments, or roles mentioned
+- **MANDATORY**: Note speaking patterns and participation levels
+- **MANDATORY**: Note expertise areas demonstrated by each speaker
+- **MANDATORY**: Highlight key contributions from each participant
+- **MANDATORY**: Provide concise hints for speaker identification based on conversation context
+- **MANDATORY**: Even if no clear speaker identification clues exist, provide basic speaker analysis
 
 ### 6. TOPIC ANALYSIS
 - Break down discussion into main topics and subtopics
@@ -216,7 +269,7 @@ export class GeminiAIService {
 - Identify areas of agreement and disagreement
 - Note any concerns or enthusiastic responses
 
-Return the analysis as a comprehensive JSON object with this structure:
+**MANDATORY**: Return the analysis as a comprehensive JSON object with this EXACT structure. ALL fields are required:
 {
   "summary": "Detailed executive summary with key outcomes and decisions",
   "mom": {
@@ -278,9 +331,25 @@ Return the analysis as a comprehensive JSON object with this structure:
 IMPORTANT: 
 1. Be extremely selective with action items - only include genuine commitments and assigned tasks
 2. Distinguish clearly between questions asked and actions to be taken
-3. Pay special attention to speaker identification - listen for names, introductions, role mentions
-4. Provide helpful context clues for speaker identification even if names aren't explicitly mentioned
-5. Utilize the full context window to provide comprehensive analysis
-6. Include ALL relevant details from the audio while maintaining structure`;
+3. **CRITICAL**: Pay special attention to speaker identification - listen for names, introductions, role mentions
+4. **CRITICAL**: Provide helpful context clues for speaker identification even if names aren't explicitly mentioned
+5. **CRITICAL**: Always include speaker_identification field even if only one speaker is detected
+6. **CRITICAL**: If you cannot distinguish speakers, still provide Speaker 1 with confidence "low" and context clues like "single speaker detected" or "unable to distinguish multiple speakers"
+7. Utilize the full context window to provide comprehensive analysis
+8. Include ALL relevant details from the audio while maintaining structure
+
+**FALLBACK RULE**: If speaker identification is difficult, provide minimal speaker_identification structure:
+{
+  "total_speakers": "1",
+  "speaker_hints": [
+    {
+      "speaker_id": "Speaker 1",
+      "suggested_name": null,
+      "role_hints": ["primary speaker"],
+      "context_clues": ["single speaker detected or unable to distinguish multiple speakers"],
+      "confidence": "low"
+    }
+  ]
+}`;
   }
 }

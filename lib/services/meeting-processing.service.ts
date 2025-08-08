@@ -1,10 +1,14 @@
-import { NextRequest } from 'next/server';
 import { FileValidationService } from './file-validation.service';
 import { GeminiAIService } from './gemini-ai.service';
 import { loggers, log } from '@/lib/logger';
 
 export interface ProcessMeetingRequest {
   formData: FormData;
+  voiceProfiles?: Array<{
+    name: string;
+    sampleText: string;
+    confidence: number;
+  }>;
 }
 
 export interface ProcessMeetingResult {
@@ -37,6 +41,7 @@ export class MeetingProcessingService {
     try {
       // Extract and validate audio file
       const audioFile = await this.extractAudioFile(request.formData);
+      const { voiceProfiles } = request;
       
       // Validate file
       const validationResult = this.fileValidator.validateFile(audioFile);
@@ -57,11 +62,16 @@ export class MeetingProcessingService {
       // Convert file to buffer
       const audioBuffer = await this.convertFileToBuffer(audioFile);
       
+      if (voiceProfiles && voiceProfiles.length > 0) {
+        log.info({ profileCount: voiceProfiles.length }, '🎤 Using voice profiles for speaker identification');
+      }
+      
       // Process with AI
       const analysisResult = await this.geminiService.analyzeAudio({
         audioFile,
         audioBuffer,
-        prompt: GeminiAIService.createPrompt()
+        prompt: GeminiAIService.createPrompt(),
+        voiceProfiles
       });
 
       loggers.file.processed('meeting-analysis', perfTimer.end());
@@ -85,7 +95,7 @@ export class MeetingProcessingService {
       
       // Handle specific error types
       if (error instanceof Error) {
-        log.debug('🔍 Checking error type for specific handling...');
+        log.debug({}, '🔍 Checking error type for specific handling...');
 
         if (error.message.includes('File size exceeds')) {
           return {
@@ -164,12 +174,12 @@ export class MeetingProcessingService {
   }
 
   private async extractAudioFile(formData: FormData): Promise<File> {
-    log.debug('📁 Parsing form data...');
+    log.debug({}, '📁 Parsing form data...');
     
     const audioFile = formData.get('audio') as File;
     
     if (!audioFile) {
-      log.error('❌ No audio file found in form data');
+      log.error({}, '❌ No audio file found in form data');
       throw new Error('No audio file provided');
     }
 
@@ -177,7 +187,7 @@ export class MeetingProcessingService {
   }
 
   private async convertFileToBuffer(file: File): Promise<Buffer> {
-    log.debug('🔄 Converting file to buffer...');
+    log.debug({}, '🔄 Converting file to buffer...');
     
     const bytes = await file.arrayBuffer();
     return Buffer.from(bytes);

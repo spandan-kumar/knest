@@ -1,10 +1,14 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { compressAudio, shouldCompressAudio, formatFileSize } from '@/lib/audioCompression';
 import { clientLoggers } from '@/lib/client-logger';
 import type { AnalysisResult, CompressionResult } from '@/lib/types/meeting.types';
+import type { DiarizationProfile } from '@/lib/types/voice-sample.types';
+import { VoiceSampleService } from '@/lib/services/voice-sample.service';
 import SpeakerMapping from './components/SpeakerMapping';
+import ProgressIndicator from './components/ProgressIndicator';
+import VoiceSampleManager from './components/VoiceSampleManager';
 
 interface ResultsDisplayProps {
   result: AnalysisResult;
@@ -400,18 +404,53 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
-  const [activeTab, setActiveTab] = useState<'record' | 'upload'>('record');
+  const [activeTab, setActiveTab] = useState<'record' | 'upload' | 'voice-samples'>('record');
   const [isCompressing, setIsCompressing] = useState(false);
   const [compressionResult, setCompressionResult] = useState<CompressionResult | null>(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [processingStage, setProcessingStage] = useState<string>('');
+  const [voiceProfiles, setVoiceProfiles] = useState<DiarizationProfile[]>([]);
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Load voice profiles on component mount
+  useEffect(() => {
+    const loadVoiceProfiles = () => {
+      try {
+        const profiles = VoiceSampleService.getActiveProfiles();
+        setVoiceProfiles(profiles);
+      } catch (error) {
+        console.warn('Failed to load voice profiles:', error);
+      }
+    };
+    
+    loadVoiceProfiles();
+  }, []);
+
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
+      
+      // Try different formats in order of preference for Gemini compatibility
+      let mimeType = 'audio/wav';
+      const supportedTypes = [
+        'audio/wav',           // Best compatibility
+        'audio/mp4',           // Good compatibility
+        'audio/mpeg',          // Good compatibility
+        'audio/webm',          // Acceptable but less ideal
+        'audio/ogg'            // Fallback
+      ];
+      
+      for (const type of supportedTypes) {
+        if (MediaRecorder.isTypeSupported(type)) {
+          mimeType = type;
+          break;
+        }
+      }
+      
+      const mediaRecorder = new MediaRecorder(stream, { mimeType });
       mediaRecorderRef.current = mediaRecorder;
       chunksRef.current = [];
 
@@ -422,7 +461,7 @@ export default function Home() {
       };
 
       mediaRecorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: 'audio/wav' });
+        const blob = new Blob(chunksRef.current, { type: mimeType });
         setAudioBlob(blob);
         setUploadedFile(null);
         stream.getTracks().forEach(track => track.stop());
@@ -507,6 +546,7 @@ export default function Home() {
       // Check if audio should be compressed
       if (shouldCompressAudio(audioToAnalyze)) {
         setIsCompressing(true);
+        setProcessingStage('Compressing audio for optimal processing...');
         clientLoggers.file.compressionStart(audioToAnalyze.size);
 
         try {
@@ -537,27 +577,89 @@ export default function Home() {
 
       const formData = new FormData();
       formData.append('audio', finalAudio, fileName);
-
-      const response = await fetch('/api/process-meeting', {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!response.ok) {
-        let errorMessage = `Failed to analyze meeting: ${response.status} ${response.statusText}`;
-        try {
-          const errorData = await response.json();
-          if (errorData.error) {
-            errorMessage = errorData.error;
-          }
-        } catch {
-          // Fall back to status text if JSON parsing fails
-        }
-        throw new Error(errorMessage);
+      
+      // Add voice profiles if available
+      if (voiceProfiles && voiceProfiles.length > 0) {
+        const profilesForAPI = voiceProfiles.map(profile => ({
+          name: profile.name,
+          sampleText: profile.voiceSamples[0]?.sampleText || '',
+          confidence: profile.confidence
+        }));
+        formData.append('voiceProfiles', JSON.stringify(profilesForAPI));
       }
 
-      const result = await response.json();
+      // Reset progress
+      setUploadProgress(0);
+      setProcessingStage('Uploading audio file...');
+
+      // Use XMLHttpRequest for progress tracking
+      const result = await new Promise<any>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+
+        xhr.upload.addEventListener('progress', (event) => {
+          if (event.lengthComputable) {
+            const percentComplete = Math.round((event.loaded / event.total) * 100);
+            setUploadProgress(percentComplete);
+          }
+        });
+
+        xhr.addEventListener('load', () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            setProcessingStage('Processing audio with AI...');
+            setUploadProgress(0); // Reset for AI processing simulation
+            
+            // Simulate AI processing progress
+            let aiProgress = 0;
+            const aiProgressInterval = setInterval(() => {
+              aiProgress += Math.random() * 15 + 5; // Random increment between 5-20%
+              if (aiProgress > 95) aiProgress = 95; // Cap at 95% until complete
+              setUploadProgress(Math.round(aiProgress));
+            }, 1000);
+            
+            try {
+              const response = JSON.parse(xhr.responseText);
+              clearInterval(aiProgressInterval);
+              setUploadProgress(100);
+              resolve(response);
+            } catch (error) {
+              clearInterval(aiProgressInterval);
+              reject(new Error('Failed to parse response'));
+            }
+          } else {
+            let errorMessage = `Failed to analyze meeting: ${xhr.status} ${xhr.statusText}`;
+            try {
+              const errorData = JSON.parse(xhr.responseText);
+              if (errorData.error) {
+                errorMessage = errorData.error;
+              }
+            } catch {
+              // Fall back to status text if JSON parsing fails
+            }
+            reject(new Error(errorMessage));
+          }
+        });
+
+        xhr.addEventListener('error', () => {
+          reject(new Error('Network error occurred'));
+        });
+
+        xhr.addEventListener('timeout', () => {
+          reject(new Error('Request timed out'));
+        });
+
+        xhr.open('POST', '/api/process-meeting');
+        xhr.timeout = 900000; // 15 minutes timeout
+        xhr.send(formData);
+      });
+
+      setProcessingStage('Finalizing results...');
       setAnalysisResult(result);
+      
+      // Brief delay to show completion state
+      setTimeout(() => {
+        setProcessingStage('');
+        setUploadProgress(0);
+      }, 1000);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to analyze meeting';
       setError(errorMessage);
@@ -569,6 +671,8 @@ export default function Home() {
     } finally {
       setIsLoading(false);
       setIsCompressing(false);
+      setUploadProgress(0);
+      setProcessingStage('');
     }
   };
 
@@ -620,6 +724,24 @@ export default function Home() {
             >
               <span className="relative z-10">Upload Recording</span>
               {activeTab === 'upload' && (
+                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-violet-500 to-indigo-500 rounded-full"></div>
+              )}
+            </button>
+            <button
+              onClick={() => setActiveTab('voice-samples')}
+              className={`px-6 py-3 font-medium transition-all duration-200 relative ${
+                activeTab === 'voice-samples'
+                  ? 'text-violet-400'
+                  : 'text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              <span className="relative z-10 flex items-center space-x-2">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 4V2a1 1 0 011-1h8a1 1 0 011 1v2M7 4h10M7 4l-1 9a2 2 0 002 2h8a2 2 0 002-2L17 4M9 9h6m-6 4h6" />
+                </svg>
+                <span>Voice Samples</span>
+              </span>
+              {activeTab === 'voice-samples' && (
                 <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-violet-500 to-indigo-500 rounded-full"></div>
               )}
             </button>
@@ -778,6 +900,15 @@ export default function Home() {
               </div>
             </div>
           )}
+
+          {activeTab === 'voice-samples' && (
+            <div>
+              <VoiceSampleManager 
+                onProfilesChange={setVoiceProfiles}
+                className="mb-8"
+              />
+            </div>
+          )}
         </div>
 
         {error && (
@@ -786,19 +917,25 @@ export default function Home() {
           </div>
         )}
 
-        {isLoading && (
-          <div className="bg-violet-500/10 border border-violet-500/30 rounded-xl p-6 mb-8">
+        {/* Compression Progress */}
+        {isCompressing && (
+          <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-6 mb-8">
             <div className="flex items-center space-x-3">
-              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-violet-400"></div>
-              <p className="text-violet-400">
-                {isCompressing 
-                  ? 'Compressing audio for faster processing...' 
-                  : 'Analyzing your meeting with advanced AI...'
-                }
-              </p>
+              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-yellow-400"></div>
+              <p className="text-yellow-400">Compressing audio for faster processing...</p>
             </div>
           </div>
         )}
+
+        {/* Upload and Processing Progress */}
+        <ProgressIndicator 
+          progress={uploadProgress}
+          stage={processingStage}
+          isVisible={isLoading && !isCompressing}
+          className="mb-8"
+          fileSize={uploadedFile?.size || audioBlob?.size}
+          fileName={uploadedFile?.name || (audioBlob ? 'recording.wav' : undefined)}
+        />
 
         {analysisResult && <ResultsDisplay result={analysisResult} />}
       </div>

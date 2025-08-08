@@ -1,90 +1,81 @@
-import pino from 'pino';
+// Simple console-based logger
+const getTimestamp = () => new Date().toISOString();
 
-// Create logger configuration based on environment
-const createLogger = () => {
-  const isDevelopment = process.env.NODE_ENV === 'development';
-  const isProduction = process.env.NODE_ENV === 'production';
-
-  // Base configuration
-  const baseConfig: pino.LoggerOptions = {
-    level: process.env.LOG_LEVEL || (isDevelopment ? 'debug' : 'info'),
-    base: {
-      pid: false, // Remove process ID for cleaner logs
-    },
-    timestamp: pino.stdTimeFunctions.isoTime,
-  };
-
-  // Development configuration - pretty print
-  if (isDevelopment) {
-    return pino({
-      ...baseConfig,
-      transport: {
-        target: 'pino-pretty',
-        options: {
-          colorize: true,
-          translateTime: 'HH:MM:ss',
-          ignore: 'hostname',
-          singleLine: false,
-          messageFormat: '{emoji} {msg}',
-        },
-      },
-    });
+const formatMessage = (level: string, emoji: string, message: string, data?: any) => {
+  const timestamp = getTimestamp();
+  const prefix = `[${timestamp}] ${emoji} ${level.toUpperCase()}:`;
+  
+  if (data && Object.keys(data).length > 0) {
+    return `${prefix} ${message} - ${JSON.stringify(data)}`;
   }
-
-  // Production configuration - structured JSON
-  if (isProduction) {
-    return pino({
-      ...baseConfig,
-      redact: {
-        paths: ['req.headers.authorization', 'req.headers.cookie', 'apiKey'],
-        censor: '[REDACTED]',
-      },
-    });
-  }
-
-  // Default configuration
-  return pino(baseConfig);
+  return `${prefix} ${message}`;
 };
 
-// Create and export the logger instance
-export const logger = createLogger();
+// Simple logger implementation
+const simpleLogger = {
+  debug: (data: any, message: string) => {
+    if (process.env.NODE_ENV === 'development') {
+      console.log(formatMessage('debug', '🔍', message, data));
+    }
+  },
+  info: (data: any, message: string) => {
+    console.log(formatMessage('info', 'ℹ️', message, data));
+  },
+  warn: (data: any, message: string) => {
+    console.warn(formatMessage('warn', '⚠️', message, data));
+  },
+  error: (data: any, message: string) => {
+    console.error(formatMessage('error', '❌', message, data));
+  },
+  fatal: (data: any, message: string) => {
+    console.error(formatMessage('fatal', '💀', message, data));
+  }
+};
+
+export const logger = simpleLogger;
 
 // Utility functions for common logging patterns
 export const loggers = {
   // API endpoint logging
   api: {
     start: (endpoint: string, method: string) =>
-      logger.info({ endpoint, method, emoji: '🚀' }, `API ${method} ${endpoint} - Starting`),
+      logger.info({ endpoint, method }, `🚀 API ${method} ${endpoint} - Starting`),
     success: (endpoint: string, method: string, duration?: number) =>
-      logger.info({ endpoint, method, duration, emoji: '✅' }, `API ${method} ${endpoint} - Success`),
+      logger.info({ endpoint, method, duration }, `✅ API ${method} ${endpoint} - Success`),
     error: (endpoint: string, method: string, error: unknown, duration?: number) =>
-      logger.error({ endpoint, method, error, duration, emoji: '❌' }, `API ${method} ${endpoint} - Error`),
+      logger.error({ endpoint, method, error, duration }, `❌ API ${method} ${endpoint} - Error`),
   },
 
   // File processing logging
   file: {
     received: (filename: string, size: number, type: string) =>
-      logger.info({ filename, size, type, emoji: '📁' }, `File received: ${filename}`),
+      logger.info({ filename, size, type }, `📁 File received: ${filename}`),
     validated: (filename: string, type: string) =>
-      logger.info({ filename, type, emoji: '✅' }, `File validated: ${type}`),
+      logger.info({ filename, type }, `✅ File validated: ${type}`),
     processing: (filename: string) =>
-      logger.info({ filename, emoji: '⚙️' }, `Processing file: ${filename}`),
+      logger.info({ filename }, `⚙️ Processing file: ${filename}`),
     processed: (filename: string, duration?: number) =>
-      logger.info({ filename, duration, emoji: '🎉' }, `File processed: ${filename}`),
+      logger.info({ filename, duration }, `🎉 File processed: ${filename}`),
     error: (filename: string, error: unknown) =>
-      logger.error({ filename, error, emoji: '💥' }, `File processing error: ${filename}`),
+      logger.error({ filename, error }, `💥 File processing error: ${filename}`),
+    compressionStart: (originalSize: number) =>
+      logger.info({ originalSize }, `🗜️ Starting audio compression`),
+    compressionComplete: (stats: any) =>
+      logger.info(stats, `✅ Audio compression complete`),
+    compressionFailed: (error: unknown) =>
+      logger.error({ error }, `❌ Audio compression failed`),
   },
 
   // AI/API integration logging
   ai: {
     request: (model: string, inputSize?: number) =>
-      logger.info({ model, inputSize, emoji: '🤖' }, `AI request to ${model}`),
+      logger.info({ model, inputSize }, `🤖 AI request to ${model}`),
     response: (model: string, outputSize?: number, duration?: number) =>
-      logger.info({ model, outputSize, duration, emoji: '🧠' }, `AI response from ${model}`),
+      logger.info({ model, outputSize, duration }, `🧠 AI response from ${model}`),
     timeout: (model: string, duration: number) =>
-      logger.warn({ model, duration, emoji: '⏰' }, `AI request timeout: ${model}`),
+      logger.warn({ model, duration }, `⏰ AI request timeout: ${model}`),
     error: (model: string, error: unknown) =>
-      logger.error({ model, error, emoji: '🚨' }, `AI request error: ${model}`),
+      logger.error({ model, error }, `🚨 AI request error: ${model}`),
   },
 
   // Performance logging
@@ -94,7 +85,7 @@ export const loggers = {
       return {
         end: () => {
           const duration = Date.now() - start;
-          logger.debug({ operation, duration, emoji: '⏱️' }, `Operation completed: ${operation}`);
+          logger.debug({ operation, duration }, `⏱️ Operation completed: ${operation}`);
           return duration;
         },
       };
@@ -104,19 +95,19 @@ export const loggers = {
   // Security logging
   security: {
     unauthorized: (ip?: string, userAgent?: string) =>
-      logger.warn({ ip, userAgent, emoji: '🔒' }, 'Unauthorized access attempt'),
+      logger.warn({ ip, userAgent }, '🔒 Unauthorized access attempt'),
     rateLimited: (ip?: string) =>
-      logger.warn({ ip, emoji: '🚦' }, 'Rate limit exceeded'),
+      logger.warn({ ip }, '🚦 Rate limit exceeded'),
     suspiciousActivity: (activity: string, details?: object) =>
-      logger.warn({ activity, details, emoji: '🚨' }, `Suspicious activity: ${activity}`),
+      logger.warn({ activity, details }, `🚨 Suspicious activity: ${activity}`),
   },
 };
 
 // Export specific log levels for convenience
 export const log = {
-  debug: logger.debug.bind(logger),
-  info: logger.info.bind(logger),
-  warn: logger.warn.bind(logger),
-  error: logger.error.bind(logger),
-  fatal: logger.fatal.bind(logger),
+  debug: (data: any, message: string) => logger.debug(data, message),
+  info: (data: any, message: string) => logger.info(data, message),
+  warn: (data: any, message: string) => logger.warn(data, message),
+  error: (data: any, message: string) => logger.error(data, message),
+  fatal: (data: any, message: string) => logger.fatal(data, message),
 };

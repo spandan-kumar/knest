@@ -92,8 +92,9 @@ export class FileValidationService {
       };
     }
 
-    // Validate file type
-    if (!this.config.allowedMimeTypes.includes(file.type)) {
+    // Validate file type (handle codec specifications like "audio/webm;codecs=opus")
+    const baseType = file.type.split(';')[0]; // Extract base type without codec info
+    if (!this.config.allowedMimeTypes.includes(file.type) && !this.config.allowedMimeTypes.includes(baseType)) {
       return {
         isValid: false,
         error: `Unsupported audio format: ${file.type}. Supported formats: AAC, FLAC, MP3, M4A, MPEG, MPGA, MP4, OPUS, PCM, WAV, WebM`,

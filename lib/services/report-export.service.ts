@@ -11,7 +11,7 @@ export interface ExportResult {
 
 export class ReportExportService {
   generateMarkdownReport(data: MeetingReportData): ExportResult {
-    log.debug('📝 Generating markdown report...');
+    log.debug({}, '📝 Generating markdown report...');
     
     const timestamp = new Date().toLocaleString();
     const isoTimestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
