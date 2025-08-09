@@ -446,9 +446,15 @@ export default function Home() {
       for (const type of supportedTypes) {
         if (MediaRecorder.isTypeSupported(type)) {
           mimeType = type;
+          console.log(`🎙️ Selected audio format: ${mimeType}`);
           break;
         }
       }
+      
+      console.log(`🎤 Available MediaRecorder types:`, supportedTypes.map(type => ({
+        type,
+        supported: MediaRecorder.isTypeSupported(type)
+      })));
       
       const mediaRecorder = new MediaRecorder(stream, { mimeType });
       mediaRecorderRef.current = mediaRecorder;
@@ -462,6 +468,11 @@ export default function Home() {
 
       mediaRecorder.onstop = () => {
         const blob = new Blob(chunksRef.current, { type: mimeType });
+        console.log(`🎵 Created audio blob:`, {
+          type: blob.type,
+          size: blob.size,
+          mimeType: mimeType
+        });
         setAudioBlob(blob);
         setUploadedFile(null);
         stream.getTracks().forEach(track => track.stop());
@@ -492,27 +503,30 @@ export default function Home() {
         setError('File size must be less than 200MB');
         return;
       }
-      // Gemini 2.5 Flash supported audio formats
+      // Gemini 2.5 Flash supported audio formats (including browser variations)
       const validTypes = [
-        'audio/x-aac',
-        'audio/flac',
-        'audio/mp3',
-        'audio/m4a',
-        'audio/x-m4a', // Alternative M4A MIME type
+        'audio/x-aac', 'audio/aac',
+        'audio/flac', 'audio/x-flac',
+        'audio/mp3', 'audio/mpeg3', 'audio/x-mp3',
+        'audio/m4a', 'audio/x-m4a',
         'audio/mpeg',
         'audio/mpga',
         'audio/mp4',
-        'audio/opus',
-        'audio/pcm',
-        'audio/wav',
-        'audio/webm',
+        'audio/opus', 'audio/x-opus',
+        'audio/pcm', 'audio/x-pcm',
+        'audio/wav', 'audio/x-wav', 'audio/wave', 'audio/x-wave',
+        'audio/webm', 'audio/x-webm',
+        'audio/ogg', 'audio/x-ogg',
         // Also support video formats that contain audio
         'video/mp4',
         'video/webm',
         'video/ogg'
       ];
-      if (!validTypes.includes(file.type)) {
-        setError('Please upload a valid audio file. Supported formats: AAC, FLAC, MP3, M4A, MPEG, MPGA, MP4, OPUS, PCM, WAV, WebM');
+      
+      // Check base type as well (for codec specifications)
+      const baseType = file.type.split(';')[0];
+      if (!validTypes.includes(file.type) && !validTypes.includes(baseType)) {
+        setError('Please upload a valid audio file. Supported formats: AAC, FLAC, MP3, M4A, MPEG, MPGA, MP4, OPUS, PCM, WAV, WebM, OGG');
         return;
       }
       setUploadedFile(file);
