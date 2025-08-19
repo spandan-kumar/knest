@@ -3,11 +3,19 @@ import { NextResponse } from 'next/server';
 
 export default auth((req) => {
   const { nextUrl } = req;
-  const isLoggedIn = !!req.auth;
+  const isLoggedIn = !!req.auth?.user;
 
   const isApiAuthRoute = nextUrl.pathname.startsWith('/api/auth');
   const isPublicRoute = nextUrl.pathname.startsWith('/auth');
   const isApiRoute = nextUrl.pathname.startsWith('/api');
+  const isRootRoute = nextUrl.pathname === '/';
+
+  console.log('Middleware debug:', {
+    pathname: nextUrl.pathname,
+    isLoggedIn,
+    hasAuth: !!req.auth,
+    user: req.auth?.user
+  });
 
   // Allow all auth API routes
   if (isApiAuthRoute) {
@@ -27,8 +35,9 @@ export default auth((req) => {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // Protect main app routes
-  if (!isLoggedIn) {
+  // Protect main app routes - redirect to sign in if not logged in
+  if (!isLoggedIn && (isRootRoute || !isPublicRoute)) {
+    console.log('Redirecting to sign-in - not authenticated');
     return NextResponse.redirect(new URL('/auth/signin', nextUrl));
   }
 
