@@ -8,11 +8,17 @@ const ALLOWED_DOMAIN = 'appointy.com';
 
 export class UserService {
   private static async ensureDataDir(): Promise<void> {
-    const dataDir = path.dirname(USERS_FILE);
     try {
+      const dataDir = path.dirname(USERS_FILE);
       await fs.access(dataDir);
     } catch {
-      await fs.mkdir(dataDir, { recursive: true });
+      try {
+        const dataDir = path.dirname(USERS_FILE);
+        await fs.mkdir(dataDir, { recursive: true });
+      } catch (error) {
+        console.warn('Could not create data directory, using in-memory storage');
+        // In production, you might want to use a database instead
+      }
     }
   }
 
