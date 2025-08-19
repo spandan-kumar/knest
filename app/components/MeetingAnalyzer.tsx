@@ -1,0 +1,915 @@
+'use client';
+
+import { useState, useRef } from 'react';
+import { compressAudio, shouldCompressAudio, formatFileSize } from '@/lib/audioCompression';
+import { clientLoggers } from '@/lib/client-logger';
+import type { AnalysisResult, CompressionResult } from '@/lib/types/meeting.types';
+import type { Session } from 'next-auth';
+import SpeakerMapping from './SpeakerMapping';
+import ProgressIndicator from './ProgressIndicator';
+import UserMenu from './UserMenu';
+
+interface ResultsDisplayProps {
+  result: AnalysisResult;
+}
+
+function ResultsDisplay({ result }: ResultsDisplayProps) {
+  const [speakerMappings, setSpeakerMappings] = useState<Record<string, string>>({});
+  const [processedResult, setProcessedResult] = useState<AnalysisResult>(result);
+
+  // Function to replace speaker IDs with real names
+  const replaceSpeakerNames = (text: string, mappings: Record<string, string>): string => {
+    let processedText = text;
+    Object.entries(mappings).forEach(([speakerId, realName]) => {
+      if (realName.trim()) {
+        // Replace "Speaker 1" with real name, case insensitive
+        const regex = new RegExp(`\\\\b${speakerId}\\\\b`, 'gi');
+        processedText = processedText.replace(regex, realName);
+      }
+    });
+    return processedText;
+  };
+
+  // Function to update speaker mappings and process the result
+  const handleSpeakerMappingUpdate = (mappings: Record<string, string>) => {
+    setSpeakerMappings(mappings);
+    
+    // Create a processed version of the result with replaced names
+    const processed: AnalysisResult = {
+      ...result,
+      transcript: replaceSpeakerNames(result.transcript, mappings),
+      summary: replaceSpeakerNames(result.summary, mappings),
+      mom: result.mom ? {
+        ...result.mom,
+        meeting_purpose: replaceSpeakerNames(result.mom.meeting_purpose, mappings),
+        attendees: result.mom.attendees.map(attendee => replaceSpeakerNames(attendee, mappings)),
+        key_decisions: result.mom.key_decisions.map(decision => replaceSpeakerNames(decision, mappings)),
+        resolutions: result.mom.resolutions.map(resolution => replaceSpeakerNames(resolution, mappings)),
+        next_meeting: result.mom.next_meeting ? replaceSpeakerNames(result.mom.next_meeting, mappings) : result.mom.next_meeting
+      } : undefined,
+      tasks: result.tasks.map(task => ({
+        ...task,
+        action: replaceSpeakerNames(task.action, mappings),
+        assigned_to: replaceSpeakerNames(task.assigned_to, mappings),
+        context: task.context ? replaceSpeakerNames(task.context, mappings) : task.context,
+        deliverable: task.deliverable ? replaceSpeakerNames(task.deliverable, mappings) : task.deliverable
+      })),
+      participants: result.participants?.map(participant => ({
+        ...participant,
+        speaker_id: replaceSpeakerNames(participant.speaker_id, mappings),
+        key_contributions: participant.key_contributions?.map(contrib => replaceSpeakerNames(contrib, mappings)),
+        expertise_areas: participant.expertise_areas?.map(area => replaceSpeakerNames(area, mappings))
+      })),
+      topics: result.topics?.map(topic => ({
+        ...topic,
+        key_points: topic.key_points?.map(point => replaceSpeakerNames(point, mappings)),
+        decisions_made: topic.decisions_made?.map(decision => replaceSpeakerNames(decision, mappings)),
+        open_questions: topic.open_questions?.map(question => replaceSpeakerNames(question, mappings))
+      }))
+    };
+    
+    setProcessedResult(processed);
+  };
+
+  const downloadMarkdown = async () => {
+    try {
+      const response = await fetch('/api/export-meeting', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(processedResult),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to export meeting report');
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = url;
+      a.download = `meeting-report-${new Date().toISOString().slice(0, 10)}.md`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (error) {
+      clientLoggers.ui.downloadError(error);
+      alert('Failed to download report. Please try again.');
+    }
+  };
+
+  const downloadTranscript = async () => {
+    try {
+      const response = await fetch('/api/export-transcript', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ transcript: processedResult.transcript }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to export transcript');
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = url;
+      a.download = `meeting-transcript-${new Date().toISOString().slice(0, 10)}.txt`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (error) {
+      clientLoggers.ui.downloadError(error);
+      alert('Failed to download transcript. Please try again.');
+    }
+  };
+
+  return (
+    <div className="w-full max-w-6xl space-y-8">
+      <div className="bg-gray-900/50 backdrop-blur-sm border border-gray-800 rounded-2xl p-8">
+        <div className="flex justify-between items-center mb-6">
+          <h2 className="text-2xl font-light text-white">Meeting Analysis</h2>
+          <div className="flex space-x-3">
+            <button
+              onClick={downloadTranscript}
+              className="px-4 py-2 bg-gray-700 text-gray-200 rounded-lg hover:bg-gray-600 transition-all duration-200 flex items-center space-x-2 text-sm"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              <span>Transcript</span>
+            </button>
+            <button
+              onClick={downloadMarkdown}
+              className="px-6 py-3 bg-gradient-to-r from-violet-600 to-indigo-600 text-white rounded-xl hover:from-violet-700 hover:to-indigo-700 transition-all duration-200 flex items-center space-x-3 group"
+            >
+              <svg className="w-5 h-5 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              <span className="font-medium">Export Report</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {result.speaker_identification && (
+        <SpeakerMapping 
+          speakerIdentification={result.speaker_identification}
+          onSpeakerMappingUpdate={handleSpeakerMappingUpdate}
+        />
+      )}
+
+      <div className="bg-gray-900/30 backdrop-blur-sm border border-gray-800/50 rounded-2xl p-8">
+        <h2 className="text-xl font-light text-gray-100 mb-6">Executive Summary</h2>
+        <p className="text-gray-300 leading-relaxed text-lg">{processedResult.summary}</p>
+      </div>
+
+      {processedResult.mom && (
+        <div className="bg-gray-900/30 backdrop-blur-sm border border-gray-800/50 rounded-2xl p-8">
+          <h2 className="text-xl font-light text-gray-100 mb-6">Minutes of Meeting</h2>
+          <div className="space-y-6">
+            <div>
+              <h3 className="text-lg font-medium text-gray-200 mb-3">Meeting Purpose</h3>
+              <p className="text-gray-300">{processedResult.mom.meeting_purpose}</p>
+            </div>
+            
+            {processedResult.mom.attendees && processedResult.mom.attendees.length > 0 && (
+              <div>
+                <h3 className="text-lg font-medium text-gray-200 mb-3">Attendees</h3>
+                <ul className="text-gray-300 space-y-1">
+                  {processedResult.mom.attendees.map((attendee, i) => (
+                    <li key={i} className="flex items-start">
+                      <span className="text-violet-400 mr-2">•</span>
+                      {attendee}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {processedResult.mom.key_decisions && processedResult.mom.key_decisions.length > 0 && (
+              <div>
+                <h3 className="text-lg font-medium text-gray-200 mb-3">Key Decisions</h3>
+                <ul className="text-gray-300 space-y-2">
+                  {processedResult.mom.key_decisions.map((decision, i) => (
+                    <li key={i} className="flex items-start">
+                      <span className="text-green-400 mr-2">✓</span>
+                      {decision}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {processedResult.mom.resolutions && processedResult.mom.resolutions.length > 0 && (
+              <div>
+                <h3 className="text-lg font-medium text-gray-200 mb-3">Resolutions</h3>
+                <ul className="text-gray-300 space-y-2">
+                  {processedResult.mom.resolutions.map((resolution, i) => (
+                    <li key={i} className="flex items-start">
+                      <span className="text-blue-400 mr-2">→</span>
+                      {resolution}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {processedResult.mom.next_meeting && (
+              <div>
+                <h3 className="text-lg font-medium text-gray-200 mb-3">Next Meeting</h3>
+                <p className="text-gray-300">{processedResult.mom.next_meeting}</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {processedResult.meeting_metadata && (
+        <div className="bg-gray-900/30 backdrop-blur-sm border border-gray-800/50 rounded-2xl p-8">
+          <h2 className="text-xl font-light text-gray-100 mb-6">Meeting Overview</h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="text-center p-6 bg-gray-800/30 rounded-xl border border-gray-700/50">
+              <p className="text-sm text-gray-400 mb-2">Tone</p>
+              <p className="font-medium text-white text-lg">{processedResult.meeting_metadata.overall_tone}</p>
+            </div>
+            <div className="text-center p-6 bg-gray-800/30 rounded-xl border border-gray-700/50">
+              <p className="text-sm text-gray-400 mb-2">Productivity</p>
+              <p className="font-medium text-white text-lg">{processedResult.meeting_metadata.productivity_level}</p>
+            </div>
+            <div className="text-center p-6 bg-gray-800/30 rounded-xl border border-gray-700/50">
+              <p className="text-sm text-gray-400 mb-2">Speakers</p>
+              <p className="font-medium text-white text-lg">{processedResult.meeting_metadata.total_speakers}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="bg-gray-900/30 backdrop-blur-sm border border-gray-800/50 rounded-2xl p-8">
+        <h2 className="text-xl font-light text-gray-100 mb-6">Action Items</h2>
+        <div className="space-y-4">
+          {processedResult.tasks.map((task, index) => (
+            <div key={index} className="border border-gray-700/50 rounded-xl p-6 bg-gray-800/20">
+              <div className="flex items-start space-x-4">
+                <input type="checkbox" className="mt-1 h-5 w-5 text-violet-500 bg-gray-800 border-gray-600 rounded focus:ring-violet-500 focus:ring-2" />
+                <div className="flex-1">
+                  <p className="text-gray-100 font-medium text-lg">{task.action}</p>
+                  <div className="mt-3 space-y-2">
+                    <p className="text-sm text-gray-300">
+                      <span className="font-medium text-gray-200">Assigned to:</span> {task.assigned_to}
+                    </p>
+                    {task.priority && (
+                      <p className="text-sm text-gray-300">
+                        <span className="font-medium text-gray-200">Priority:</span> 
+                        <span className={`ml-2 px-3 py-1 rounded-full text-xs font-medium ${
+                          task.priority === 'high' ? 'bg-red-500/20 text-red-300 border border-red-500/30' :
+                          task.priority === 'medium' ? 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/30' :
+                          'bg-green-500/20 text-green-300 border border-green-500/30'
+                        }`}>
+                          {task.priority}
+                        </span>
+                      </p>
+                    )}
+                    {task.deadline && (
+                      <p className="text-sm text-gray-300">
+                        <span className="font-medium text-gray-200">Deadline:</span> {task.deadline}
+                      </p>
+                    )}
+                    {task.context && (
+                      <p className="text-sm text-gray-300">
+                        <span className="font-medium text-gray-200">Context:</span> {task.context}
+                      </p>
+                    )}
+                    {task.deliverable && (
+                      <p className="text-sm text-gray-300">
+                        <span className="font-medium text-gray-200">Deliverable:</span> {task.deliverable}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {processedResult.participants && processedResult.participants.length > 0 && (
+        <div className="bg-gray-900/30 backdrop-blur-sm border border-gray-800/50 rounded-2xl p-8">
+          <h2 className="text-xl font-light text-gray-100 mb-6">Participants</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {processedResult.participants.map((participant, index) => (
+              <div key={index} className="border border-gray-700/50 rounded-xl p-6 bg-gray-800/20">
+                <h3 className="font-medium text-gray-100 mb-3 text-lg">{participant.speaker_id}</h3>
+                <p className="text-sm text-gray-300 mb-4">
+                  <span className="font-medium text-gray-200">Participation:</span> {participant.participation_level}
+                </p>
+                {participant.key_contributions && participant.key_contributions.length > 0 && (
+                  <div>
+                    <p className="text-sm font-medium text-gray-200 mb-2">Key Contributions:</p>
+                    <ul className="text-sm text-gray-300 space-y-1">
+                      {participant.key_contributions?.map((contribution, i) => (
+                        <li key={i} className="flex items-start">
+                          <span className="text-violet-400 mr-2">•</span>
+                          {contribution}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {processedResult.topics && processedResult.topics.length > 0 && (
+        <div className="bg-gray-900/30 backdrop-blur-sm border border-gray-800/50 rounded-2xl p-8">
+          <h2 className="text-xl font-light text-gray-100 mb-6">Topics Discussed</h2>
+          <div className="space-y-6">
+            {processedResult.topics?.map((topic, index) => (
+              <div key={index} className="border border-gray-700/50 rounded-xl p-6 bg-gray-800/20">
+                <h3 className="font-medium text-gray-100 mb-3 text-lg">{topic.topic}</h3>
+                <p className="text-sm text-gray-300 mb-4">
+                  <span className="font-medium text-gray-200">Emphasis:</span> {topic.duration_emphasis}
+                </p>
+                
+                {topic.key_points && topic.key_points.length > 0 && (
+                  <div className="mb-4">
+                    <p className="text-sm font-medium text-gray-200 mb-2">Key Points:</p>
+                    <ul className="text-sm text-gray-300 space-y-1">
+                      {topic.key_points?.map((point, i) => (
+                        <li key={i} className="flex items-start">
+                          <span className="text-violet-400 mr-2">•</span>
+                          {point}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {topic.decisions_made && topic.decisions_made.length > 0 && (
+                  <div className="mb-4">
+                    <p className="text-sm font-medium text-gray-200 mb-2">Decisions Made:</p>
+                    <ul className="text-sm text-gray-300 space-y-1">
+                      {topic.decisions_made?.map((decision, i) => (
+                        <li key={i} className="flex items-start">
+                          <span className="text-green-400 mr-2">✓</span>
+                          {decision}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {topic.open_questions && topic.open_questions.length > 0 && (
+                  <div>
+                    <p className="text-sm font-medium text-gray-200 mb-2">Open Questions:</p>
+                    <ul className="text-sm text-gray-300 space-y-1">
+                      {topic.open_questions?.map((question, i) => (
+                        <li key={i} className="flex items-start">
+                          <span className="text-yellow-400 mr-2">?</span>
+                          {question}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="bg-gray-900/30 backdrop-blur-sm border border-gray-800/50 rounded-2xl p-8">
+        <h2 className="text-xl font-light text-gray-100 mb-6">Full Transcript</h2>
+        <div className="bg-gray-950/50 rounded-xl p-6 max-h-96 overflow-y-auto border border-gray-800/30">
+          <pre className="whitespace-pre-wrap text-sm text-gray-300 font-mono leading-relaxed">{processedResult.transcript}</pre>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface MeetingAnalyzerProps {
+  session: Session;
+}
+
+export default function MeetingAnalyzer({ session }: MeetingAnalyzerProps) {
+  const [isRecording, setIsRecording] = useState(false);
+  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
+  const [activeTab, setActiveTab] = useState<'record' | 'upload'>('record');
+  const [isCompressing, setIsCompressing] = useState(false);
+  const [compressionResult, setCompressionResult] = useState<CompressionResult | null>(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [processingStage, setProcessingStage] = useState<string>('');
+  
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      
+      // Try different formats in order of preference for Gemini compatibility
+      let mimeType = 'audio/wav';
+      const supportedTypes = [
+        'audio/wav',           // Best compatibility
+        'audio/mp4',           // Good compatibility
+        'audio/mpeg',          // Good compatibility
+        'audio/webm',          // Acceptable but less ideal
+        'audio/ogg'            // Fallback
+      ];
+      
+      for (const type of supportedTypes) {
+        if (MediaRecorder.isTypeSupported(type)) {
+          mimeType = type;
+          console.log(`🎙️ Selected audio format: ${mimeType}`);
+          break;
+        }
+      }
+      
+      console.log(`🎤 Available MediaRecorder types:`, supportedTypes.map(type => ({
+        type,
+        supported: MediaRecorder.isTypeSupported(type)
+      })));
+      
+      const mediaRecorder = new MediaRecorder(stream, { mimeType });
+      mediaRecorderRef.current = mediaRecorder;
+      chunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          chunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: mimeType });
+        console.log(`🎵 Created audio blob:`, {
+          type: blob.type,
+          size: blob.size,
+          mimeType: mimeType
+        });
+        setAudioBlob(blob);
+        setUploadedFile(null);
+        stream.getTracks().forEach(track => track.stop());
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+      setError(null);
+    } catch (err) {
+      setError('Failed to access microphone. Please check permissions.');
+      clientLoggers.recording.error(err);
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+    }
+  };
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      clientLoggers.file.selected(file.name, file.size, file.type);
+      
+      if (file.size > 200 * 1024 * 1024) {
+        setError('File size must be less than 200MB');
+        return;
+      }
+      // Gemini 2.5 Flash supported audio formats (including browser variations)
+      const validTypes = [
+        'audio/x-aac', 'audio/aac',
+        'audio/flac', 'audio/x-flac',
+        'audio/mp3', 'audio/mpeg3', 'audio/x-mp3',
+        'audio/m4a', 'audio/x-m4a',
+        'audio/mpeg',
+        'audio/mpga',
+        'audio/mp4',
+        'audio/opus', 'audio/x-opus',
+        'audio/pcm', 'audio/x-pcm',
+        'audio/wav', 'audio/x-wav', 'audio/wave', 'audio/x-wave',
+        'audio/webm', 'audio/x-webm',
+        'audio/ogg', 'audio/x-ogg',
+        // Also support video formats that contain audio
+        'video/mp4',
+        'video/webm',
+        'video/ogg'
+      ];
+      
+      // Check base type as well (for codec specifications)
+      const baseType = file.type.split(';')[0];
+      if (!validTypes.includes(file.type) && !validTypes.includes(baseType)) {
+        setError('Please upload a valid audio file. Supported formats: AAC, FLAC, MP3, M4A, MPEG, MPGA, MP4, OPUS, PCM, WAV, WebM, OGG');
+        return;
+      }
+      setUploadedFile(file);
+      setAudioBlob(null);
+      setError(null);
+    }
+  };
+
+  const clearAudio = () => {
+    setAudioBlob(null);
+    setUploadedFile(null);
+    setError(null);
+    setCompressionResult(null);
+    setAnalysisResult(null); // Clear previous results
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const analyzeMeeting = async () => {
+    const audioToAnalyze = audioBlob || uploadedFile;
+    if (!audioToAnalyze) return;
+
+    setIsLoading(true);
+    setError(null);
+    setCompressionResult(null);
+
+    try {
+      let finalAudio = audioToAnalyze;
+      let fileName = uploadedFile ? uploadedFile.name : 'recording.wav';
+
+      // Check if audio should be compressed
+      if (shouldCompressAudio(audioToAnalyze)) {
+        setIsCompressing(true);
+        setProcessingStage('Compressing audio for optimal processing...');
+        clientLoggers.file.compressionStart(audioToAnalyze.size);
+
+        try {
+          const compressionOptions = {
+            bitRate: 128, // 128 kbps for good quality/size balance
+            sampleRate: 44100,
+            channels: 1, // Mono for smaller file size
+            quality: 3 // Good quality
+          };
+
+          const result = await compressAudio(audioToAnalyze, compressionOptions);
+          setCompressionResult(result);
+          finalAudio = result.compressedBlob;
+          fileName = fileName.replace(/\\.[^/.]+$/, '') + '.mp3'; // Change extension to mp3
+
+          clientLoggers.file.compressionComplete({
+            originalSize: result.originalSize,
+            compressedSize: result.compressedSize,
+            compressionRatio: result.compressionRatio
+          });
+        } catch (compressionError) {
+          clientLoggers.file.compressionFailed(compressionError);
+          // Continue with original file if compression fails
+        } finally {
+          setIsCompressing(false);
+        }
+      }
+
+      const formData = new FormData();
+      formData.append('audio', finalAudio, fileName);
+
+      // Reset progress
+      setUploadProgress(0);
+      setProcessingStage('Uploading audio file...');
+
+      // Use XMLHttpRequest for progress tracking
+      const result = await new Promise<any>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+
+        xhr.upload.addEventListener('progress', (event) => {
+          if (event.lengthComputable) {
+            const percentComplete = Math.round((event.loaded / event.total) * 100);
+            setUploadProgress(percentComplete);
+          }
+        });
+
+        xhr.addEventListener('load', () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            setProcessingStage('Processing audio with AI...');
+            setUploadProgress(0); // Reset for AI processing simulation
+            
+            // Simulate AI processing progress
+            let aiProgress = 0;
+            const aiProgressInterval = setInterval(() => {
+              aiProgress += Math.random() * 15 + 5; // Random increment between 5-20%
+              if (aiProgress > 95) aiProgress = 95; // Cap at 95% until complete
+              setUploadProgress(Math.round(aiProgress));
+            }, 1000);
+            
+            try {
+              const response = JSON.parse(xhr.responseText);
+              clearInterval(aiProgressInterval);
+              setUploadProgress(100);
+              resolve(response);
+            } catch (error) {
+              clearInterval(aiProgressInterval);
+              reject(new Error('Failed to parse response'));
+            }
+          } else {
+            let errorMessage = `Failed to analyze meeting: ${xhr.status} ${xhr.statusText}`;
+            try {
+              const errorData = JSON.parse(xhr.responseText);
+              if (errorData.error) {
+                errorMessage = errorData.error;
+              }
+            } catch {
+              // Fall back to status text if JSON parsing fails
+            }
+            reject(new Error(errorMessage));
+          }
+        });
+
+        xhr.addEventListener('error', () => {
+          reject(new Error('Network error occurred'));
+        });
+
+        xhr.addEventListener('timeout', () => {
+          reject(new Error('Request timed out'));
+        });
+
+        xhr.open('POST', '/api/process-meeting');
+        xhr.timeout = 900000; // 15 minutes timeout
+        xhr.send(formData);
+      });
+
+      setProcessingStage('Finalizing results...');
+      setAnalysisResult(result);
+      
+      // Brief delay to show completion state
+      setTimeout(() => {
+        setProcessingStage('');
+        setUploadProgress(0);
+      }, 1000);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to analyze meeting';
+      setError(errorMessage);
+      clientLoggers.api.error('/api/process-meeting', 'POST', { 
+        error: errorMessage, 
+        originalError: err,
+        timestamp: new Date().toISOString()
+      });
+    } finally {
+      setIsLoading(false);
+      setIsCompressing(false);
+      setUploadProgress(0);
+      setProcessingStage('');
+    }
+  };
+
+  const getAudioSource = () => {
+    if (audioBlob) return 'recording';
+    if (uploadedFile) return 'upload';
+    return null;
+  };
+
+  const audioSource = getAudioSource();
+
+  return (
+    <div className="min-h-screen bg-gray-950 py-12 px-4">
+      <div className="max-w-6xl mx-auto">
+        <div className="text-center mb-12">
+          <div className="flex justify-between items-center mb-6">
+            <div className="flex-1">
+              <h1 className="text-6xl font-light text-white mb-4 tracking-tight">
+                K<span className="text-violet-400">Nest</span>
+              </h1>
+              <div className="w-24 h-1 bg-gradient-to-r from-violet-500 to-indigo-500 mx-auto rounded-full"></div>
+            </div>
+            <UserMenu session={session} />
+          </div>
+          <p className="text-xl text-gray-400 max-w-2xl mx-auto leading-relaxed">
+            Transform your meetings into actionable intelligence with AI-powered analysis
+          </p>
+        </div>
+
+        <div className="bg-gray-900/50 backdrop-blur-sm border border-gray-800 rounded-2xl p-8 mb-12">
+          <div className="flex border-b border-gray-700/50 mb-8">
+            <button
+              onClick={() => setActiveTab('record')}
+              className={`px-6 py-3 font-medium transition-all duration-200 relative ${
+                activeTab === 'record'
+                  ? 'text-violet-400'
+                  : 'text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              <span className="relative z-10">Record Meeting</span>
+              {activeTab === 'record' && (
+                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-violet-500 to-indigo-500 rounded-full"></div>
+              )}
+            </button>
+            <button
+              onClick={() => setActiveTab('upload')}
+              className={`px-6 py-3 font-medium transition-all duration-200 relative ${
+                activeTab === 'upload'
+                  ? 'text-violet-400'
+                  : 'text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              <span className="relative z-10">Upload Recording</span>
+              {activeTab === 'upload' && (
+                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-violet-500 to-indigo-500 rounded-full"></div>
+              )}
+            </button>
+          </div>
+
+          {activeTab === 'record' && (
+            <div className="flex flex-col items-center space-y-8">
+              <div className="flex space-x-6">
+                <button
+                  onClick={startRecording}
+                  disabled={isRecording}
+                  className={`px-8 py-4 rounded-xl font-medium transition-all duration-200 flex items-center space-x-3 ${
+                    isRecording
+                      ? 'bg-gray-800 text-gray-500 cursor-not-allowed'
+                      : 'bg-gradient-to-r from-red-600 to-red-700 text-white hover:from-red-700 hover:to-red-800 shadow-lg hover:shadow-red-500/25 transform hover:scale-105'
+                  }`}
+                >
+                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M7 4a3 3 0 016 0v4a3 3 0 11-6 0V4zm4 10.93A7.001 7.001 0 0017 8a1 1 0 10-2 0A5 5 0 015 8a1 1 0 00-2 0 7.001 7.001 0 006 6.93V17H6a1 1 0 100 2h8a1 1 0 100-2h-3v-2.07z" clipRule="evenodd" />
+                  </svg>
+                  <span>{isRecording ? 'Recording...' : 'Start Recording'}</span>
+                </button>
+                
+                <button
+                  onClick={stopRecording}
+                  disabled={!isRecording}
+                  className={`px-8 py-4 rounded-xl font-medium transition-all duration-200 flex items-center space-x-3 ${
+                    !isRecording
+                      ? 'bg-gray-800 text-gray-500 cursor-not-allowed'
+                      : 'bg-gray-700 text-white hover:bg-gray-600 shadow-lg transform hover:scale-105'
+                  }`}
+                >
+                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clipRule="evenodd" />
+                  </svg>
+                  <span>Stop Recording</span>
+                </button>
+              </div>
+
+              {isRecording && (
+                <div className="flex items-center space-x-3 text-red-400">
+                  <div className="w-4 h-4 bg-red-500 rounded-full animate-pulse"></div>
+                  <span className="font-medium">Recording in progress...</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'upload' && (
+            <div className="flex flex-col items-center space-y-6">
+              <div className="w-full max-w-lg">
+                <label className="block text-sm font-medium text-gray-300 mb-3">
+                  Choose Audio File
+                </label>
+                <div className="relative">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="audio/*,video/*"
+                    onChange={handleFileUpload}
+                    className="block w-full text-sm text-gray-300 file:mr-4 file:py-3 file:px-6 file:rounded-xl file:border-0 file:text-sm file:font-medium file:bg-gradient-to-r file:from-violet-600 file:to-indigo-600 file:text-white hover:file:from-violet-700 hover:file:to-indigo-700 file:transition-all file:duration-200 bg-gray-800 border border-gray-700 rounded-xl p-3"
+                  />
+                </div>
+                <p className="mt-2 text-xs text-gray-500">
+                  Supported: AAC, FLAC, MP3, M4A, MPEG, MPGA, MP4, OPUS, PCM, WAV, WebM (max 200MB)
+                </p>
+              </div>
+            </div>
+          )}
+
+          {audioSource && (
+            <div className="mt-8 text-center">
+              <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-6 mb-6">
+                <div className="flex items-center justify-center space-x-3 mb-2">
+                  <div className="w-6 h-6 bg-green-500 rounded-full flex items-center justify-center">
+                    <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                    </svg>
+                  </div>
+                  <p className="text-green-400 font-medium">
+                    {audioSource === 'recording' ? 'Recording ready for analysis' : 'File uploaded successfully'}
+                  </p>
+                </div>
+                {uploadedFile && (
+                  <div className="text-center">
+                    <p className="text-sm text-green-300">{uploadedFile.name}</p>
+                    <p className="text-xs text-green-400/70">Size: {formatFileSize(uploadedFile.size)}</p>
+                  </div>
+                )}
+                {audioBlob && (
+                  <div className="text-center">
+                    <p className="text-xs text-green-400/70">Size: {formatFileSize(audioBlob.size)}</p>
+                  </div>
+                )}
+              </div>
+
+              {compressionResult && (
+                <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-6 mb-6">
+                  <div className="flex items-center justify-center space-x-3 mb-3">
+                    <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center">
+                      <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                      </svg>
+                    </div>
+                    <p className="text-blue-400 font-medium">Audio Compressed Successfully</p>
+                  </div>
+                  <div className="grid grid-cols-3 gap-4 text-center text-sm">
+                    <div>
+                      <p className="text-blue-300 font-medium">Original</p>
+                      <p className="text-blue-400/80">{formatFileSize(compressionResult.originalSize)}</p>
+                    </div>
+                    <div>
+                      <p className="text-blue-300 font-medium">Compressed</p>
+                      <p className="text-blue-400/80">{formatFileSize(compressionResult.compressedSize)}</p>
+                    </div>
+                    <div>
+                      <p className="text-blue-300 font-medium">Reduction</p>
+                      <p className="text-blue-400/80">{compressionResult.compressionRatio.toFixed(2)}x</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              <div className="flex items-center justify-center space-x-6">
+                <button
+                  onClick={analyzeMeeting}
+                  disabled={isLoading}
+                  className={`px-10 py-4 rounded-xl font-medium transition-all duration-200 flex items-center space-x-3 ${
+                    isLoading
+                      ? 'bg-gray-800 text-gray-500 cursor-not-allowed'
+                      : 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white hover:from-violet-700 hover:to-indigo-700 shadow-lg hover:shadow-violet-500/25 transform hover:scale-105'
+                  }`}
+                >
+                  {isLoading ? (
+                    <>
+                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                      <span>{isCompressing ? 'Compressing...' : 'Analyzing...'}</span>
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                      </svg>
+                      <span>Analyze Meeting</span>
+                    </>
+                  )}
+                </button>
+                
+                <button
+                  onClick={clearAudio}
+                  disabled={isLoading}
+                  className="px-6 py-4 rounded-xl font-medium text-gray-400 hover:text-gray-200 hover:bg-gray-800/50 transition-all duration-200"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+          )}
+
+        </div>
+
+        {error && (
+          <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-6 mb-8">
+            <p className="text-red-400">{error}</p>
+          </div>
+        )}
+
+        {/* Compression Progress */}
+        {isCompressing && (
+          <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-6 mb-8">
+            <div className="flex items-center space-x-3">
+              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-yellow-400"></div>
+              <p className="text-yellow-400">Compressing audio for faster processing...</p>
+            </div>
+          </div>
+        )}
+
+        {/* Upload and Processing Progress */}
+        <ProgressIndicator 
+          progress={uploadProgress}
+          stage={processingStage}
+          isVisible={isLoading && !isCompressing}
+          className="mb-8"
+          fileSize={uploadedFile?.size || audioBlob?.size}
+          fileName={uploadedFile?.name || (audioBlob ? 'recording.wav' : undefined)}
+        />
+
+        {analysisResult && <ResultsDisplay result={analysisResult} />}
+      </div>
+    </div>
+  );
+}

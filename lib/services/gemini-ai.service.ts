@@ -11,11 +11,6 @@ export interface AIAnalysisRequest {
   audioFile: File;
   audioBuffer: Buffer;
   prompt: string;
-  voiceProfiles?: Array<{
-    name: string;
-    sampleText: string;
-    confidence: number;
-  }>;
 }
 
 import type { AnalysisResult } from '../types/meeting.types';
@@ -44,7 +39,7 @@ export class GeminiAIService {
   }
 
   async analyzeAudio(request: AIAnalysisRequest): Promise<AIAnalysisResult> {
-    const { audioFile, audioBuffer, prompt, voiceProfiles } = request;
+    const { audioFile, audioBuffer, prompt } = request;
     
     // Validate inputs
     if (!audioFile || !audioBuffer || !prompt) {
@@ -68,15 +63,10 @@ export class GeminiAIService {
     log.info({ timeout: this.config.timeoutMs }, `⏱️ Starting Gemini API call with ${this.config.timeoutMs / 1000}-second timeout...`);
 
     try {
-      // Create enhanced prompt with voice profiles
-      const enhancedPrompt = voiceProfiles && voiceProfiles.length > 0 
-        ? GeminiAIService.createPrompt(voiceProfiles)
-        : prompt;
-
       // Make the request to Gemini with timeout
       const result = await Promise.race([
         this.model.generateContent([
-          enhancedPrompt,
+          prompt,
           {
             inlineData: {
               mimeType: audioFile.type,
@@ -95,8 +85,24 @@ export class GeminiAIService {
       log.info({ length: text.length }, '📝 Raw response received');
       log.debug({ preview: text.substring(0, 500) }, '🔍 Response preview');
       log.debug({ ending: text.substring(text.length - 200) }, '🔚 Response ending');
+      
+      // Debug: Log the full response for troubleshooting
+      console.log('🤖 FULL AI RESPONSE:');
+      console.log(text);
+      console.log('🤖 END OF RESPONSE');
 
-      return this.parseAIResponse(text);
+      const parsedResult = this.parseAIResponse(text);
+      
+      // Debug speaker identification specifically
+      console.log('🎯 SPEAKER IDENTIFICATION DEBUG:');
+      console.log('Has speaker_identification:', !!parsedResult.speaker_identification);
+      if (parsedResult.speaker_identification) {
+        console.log('Total speakers:', parsedResult.speaker_identification.total_speakers);
+        console.log('Speaker hints:', parsedResult.speaker_identification.speaker_hints);
+        console.log('Speaker hints count:', parsedResult.speaker_identification.speaker_hints?.length);
+      }
+      
+      return parsedResult;
 
     } catch (error) {
       if (error instanceof Error && error.message.includes('timed out')) {
@@ -194,28 +200,8 @@ export class GeminiAIService {
     }, '✅ Response validation passed');
   }
 
-  static createPrompt(voiceProfiles?: Array<{name: string; sampleText: string; confidence: number}>): string {
-    let voiceProfilesSection = '';
-    
-    if (voiceProfiles && voiceProfiles.length > 0) {
-      voiceProfilesSection = `
-## VOICE PROFILES FOR SPEAKER IDENTIFICATION
-You have access to voice profiles that can help with speaker identification. Use these as reference for matching speakers in the audio:
-
-${voiceProfiles.map((profile, index) => `
-**Profile ${index + 1}: ${profile.name}**
-- Sample text: "${profile.sampleText}"
-- Confidence level: ${(profile.confidence * 100).toFixed(0)}%
-- Use this profile to help identify when "${profile.name}" is speaking in the audio
-`).join('')}
-
-**IMPORTANT**: Use these voice profiles to improve speaker identification accuracy. When you detect speech patterns that might match these profiles, suggest the corresponding name in the speaker_identification section.
-
-`;
-    }
-
+  static createPrompt(): string {
     return `You are an expert meeting assistant with advanced audio analysis capabilities. Analyze the provided audio recording comprehensively and extract maximum value from the content.
-${voiceProfilesSection}
 ## CRITICAL ANALYSIS REQUIREMENTS:
 
 ### 1. DETAILED TRANSCRIPT WITH SPEAKER DIARIZATION (MANDATORY)

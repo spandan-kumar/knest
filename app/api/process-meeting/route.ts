@@ -12,20 +12,9 @@ export async function POST(req: NextRequest) {
     // Parse form data
     const formData = await req.formData();
     
-    // Extract voice profiles if provided
-    const voiceProfilesData = formData.get('voiceProfiles');
-    let voiceProfiles;
-    if (voiceProfilesData && typeof voiceProfilesData === 'string') {
-      try {
-        voiceProfiles = JSON.parse(voiceProfilesData);
-      } catch (error) {
-        console.warn('Failed to parse voice profiles:', error);
-      }
-    }
-    
     // Process meeting with service layer
     const meetingService = new MeetingProcessingService();
-    const result = await meetingService.processMeeting({ formData, voiceProfiles });
+    const result = await meetingService.processMeeting({ formData });
     
     if (!result.success) {
       return APIErrorHandler.handleError('/api/process-meeting', 'POST', result.error!);

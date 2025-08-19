@@ -21,10 +21,16 @@ export async function compressAudio(
     quality = 3
   } = options;
 
+  console.log('🗜️ COMPRESSION DEBUG START:');
+  console.log('Input blob type:', audioBlob.type);
+  console.log('Input blob size:', audioBlob.size);
+  console.log('Compression options:', { bitRate, sampleRate, channels, quality });
+
   try {
     // For browser compatibility, we'll use MediaRecorder with different codecs
     // If the original is already compressed (MP3, AAC), return as-is
     if (audioBlob.type === 'audio/mp3' || audioBlob.type === 'audio/aac' || audioBlob.type === 'audio/mpeg') {
+      console.log('🗜️ Skipping compression - already compressed format');
       return {
         compressedBlob: audioBlob,
         originalSize: audioBlob.size,
@@ -113,6 +119,13 @@ export async function compressAudio(
         const originalSize = audioBlob.size;
         const compressedSize = compressedBlob.size;
         const compressionRatio = originalSize / compressedSize;
+        
+        console.log('🗜️ COMPRESSION RESULT:');
+        console.log('Original size:', originalSize);
+        console.log('Compressed size:', compressedSize);
+        console.log('Compression ratio:', compressionRatio);
+        console.log('Selected codec:', selectedCodec);
+        console.log('Chunks received:', chunks.length);
         
         resolve({
           compressedBlob,

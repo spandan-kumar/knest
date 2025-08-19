@@ -4,11 +4,6 @@ import { loggers, log } from '@/lib/logger';
 
 export interface ProcessMeetingRequest {
   formData: FormData;
-  voiceProfiles?: Array<{
-    name: string;
-    sampleText: string;
-    confidence: number;
-  }>;
 }
 
 export interface ProcessMeetingResult {
@@ -41,7 +36,6 @@ export class MeetingProcessingService {
     try {
       // Extract and validate audio file
       const audioFile = await this.extractAudioFile(request.formData);
-      const { voiceProfiles } = request;
       
       // Validate file
       const validationResult = this.fileValidator.validateFile(audioFile);
@@ -62,16 +56,11 @@ export class MeetingProcessingService {
       // Convert file to buffer
       const audioBuffer = await this.convertFileToBuffer(audioFile);
       
-      if (voiceProfiles && voiceProfiles.length > 0) {
-        log.info({ profileCount: voiceProfiles.length }, '🎤 Using voice profiles for speaker identification');
-      }
-      
       // Process with AI
       const analysisResult = await this.geminiService.analyzeAudio({
         audioFile,
         audioBuffer,
-        prompt: GeminiAIService.createPrompt(),
-        voiceProfiles
+        prompt: GeminiAIService.createPrompt()
       });
 
       loggers.file.processed('meeting-analysis', perfTimer.end());
