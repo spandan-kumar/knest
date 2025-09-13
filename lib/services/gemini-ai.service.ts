@@ -135,6 +135,9 @@ export class GeminiAIService {
       
       log.debug({ keys: Object.keys(parsedResult) }, '✅ JSON parsed successfully');
 
+      // Add fallback for missing speaker_identification field
+      this.ensureSpeakerIdentification(parsedResult);
+
       this.validateAIResponse(parsedResult);
 
       return parsedResult as AIAnalysisResult;
@@ -142,6 +145,28 @@ export class GeminiAIService {
     } catch (parseError) {
       log.error({ parseError, rawText: text.substring(0, 1000) }, '❌ JSON parsing failed');
       throw new Error(`Failed to parse AI response: ${parseError instanceof Error ? parseError.message : 'Unknown parse error'}`);
+    }
+  }
+
+  private ensureSpeakerIdentification(parsedResult: any): void {
+    if (!parsedResult.speaker_identification) {
+      log.warn({}, '⚠️  Missing speaker_identification field - adding fallback structure');
+      
+      // Add minimal fallback speaker identification structure
+      parsedResult.speaker_identification = {
+        total_speakers: "1",
+        speaker_hints: [
+          {
+            speaker_id: "Speaker 1",
+            suggested_name: null,
+            role_hints: ["primary speaker"],
+            context_clues: ["automatically generated fallback - AI did not provide speaker identification"],
+            confidence: "low"
+          }
+        ]
+      };
+      
+      log.info({}, '✅ Added fallback speaker_identification structure');
     }
   }
 
@@ -202,6 +227,9 @@ export class GeminiAIService {
 
   static createPrompt(): string {
     return `You are an expert meeting assistant with advanced audio analysis capabilities. Analyze the provided audio recording comprehensively and extract maximum value from the content.
+
+## ⚠️  ABSOLUTELY MANDATORY: Your response MUST include the "speaker_identification" field - this is CRITICAL for system functionality!
+
 ## CRITICAL ANALYSIS REQUIREMENTS:
 
 ### 1. DETAILED TRANSCRIPT WITH SPEAKER DIARIZATION (MANDATORY)
@@ -234,7 +262,8 @@ export class GeminiAIService {
 - Concrete next steps that require execution
 
 
-### 5. SPEAKER IDENTIFICATION & PARTICIPANT ANALYSIS (MANDATORY)
+### 5. ⚠️  SPEAKER IDENTIFICATION & PARTICIPANT ANALYSIS (ABSOLUTELY MANDATORY - NEVER OMIT THIS!)
+- **MANDATORY**: This field is REQUIRED for system functionality - never omit it!
 - **MANDATORY**: Analyze conversation context for speaker identification clues
 - **MANDATORY**: Extract names mentioned in conversation (introductions, name mentions, role references)
 - **MANDATORY**: Identify job titles, departments, or roles mentioned
@@ -324,7 +353,7 @@ IMPORTANT:
 7. Utilize the full context window to provide comprehensive analysis
 8. Include ALL relevant details from the audio while maintaining structure
 
-**FALLBACK RULE**: If speaker identification is difficult, provide minimal speaker_identification structure:
+**⚠️  CRITICAL FALLBACK RULE ⚠️**: If speaker identification is difficult, YOU MUST STILL provide the speaker_identification field with this minimal structure - DO NOT OMIT THIS FIELD UNDER ANY CIRCUMSTANCES:
 {
   "total_speakers": "1",
   "speaker_hints": [
@@ -336,6 +365,8 @@ IMPORTANT:
       "confidence": "low"
     }
   ]
-}`;
+}
+
+⚠️  REMINDER: The "speaker_identification" field is absolutely mandatory and must be present in every response!`;
   }
 }

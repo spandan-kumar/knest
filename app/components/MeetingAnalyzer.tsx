@@ -14,8 +14,77 @@ interface ResultsDisplayProps {
 }
 
 function ResultsDisplay({ result }: ResultsDisplayProps) {
-  const [speakerMappings, setSpeakerMappings] = useState<Record<string, string>>({});
-  const [processedResult, setProcessedResult] = useState<AnalysisResult>(result);
+  const [speakerMappings, setSpeakerMappings] = useState<Record<string, string>>(() => {
+    // Initialize with suggested names if available
+    const initialMappings: Record<string, string> = {};
+    if (result.speaker_identification?.speaker_hints) {
+      result.speaker_identification.speaker_hints.forEach(hint => {
+        if (hint.suggested_name) {
+          initialMappings[hint.speaker_id] = hint.suggested_name;
+        }
+      });
+    }
+    return initialMappings;
+  });
+  const [processedResult, setProcessedResult] = useState<AnalysisResult>(() => {
+    // Initialize with any suggested names already applied
+    const initialMappings: Record<string, string> = {};
+    if (result.speaker_identification?.speaker_hints) {
+      result.speaker_identification.speaker_hints.forEach(hint => {
+        if (hint.suggested_name) {
+          initialMappings[hint.speaker_id] = hint.suggested_name;
+        }
+      });
+    }
+    
+    if (Object.keys(initialMappings).length > 0) {
+      return {
+        ...result,
+        transcript: initialMappings ? replaceSpeakerNamesHelper(result.transcript, initialMappings) : result.transcript,
+        summary: initialMappings ? replaceSpeakerNamesHelper(result.summary, initialMappings) : result.summary,
+        mom: result.mom ? {
+          ...result.mom,
+          meeting_purpose: replaceSpeakerNamesHelper(result.mom.meeting_purpose, initialMappings),
+          attendees: result.mom.attendees.map(attendee => replaceSpeakerNamesHelper(attendee, initialMappings)),
+          key_decisions: result.mom.key_decisions.map(decision => replaceSpeakerNamesHelper(decision, initialMappings)),
+          resolutions: result.mom.resolutions.map(resolution => replaceSpeakerNamesHelper(resolution, initialMappings)),
+          next_meeting: result.mom.next_meeting ? replaceSpeakerNamesHelper(result.mom.next_meeting, initialMappings) : result.mom.next_meeting
+        } : undefined,
+        tasks: result.tasks.map(task => ({
+          ...task,
+          action: replaceSpeakerNamesHelper(task.action, initialMappings),
+          assigned_to: replaceSpeakerNamesHelper(task.assigned_to, initialMappings),
+          context: task.context ? replaceSpeakerNamesHelper(task.context, initialMappings) : task.context,
+          deliverable: task.deliverable ? replaceSpeakerNamesHelper(task.deliverable, initialMappings) : task.deliverable
+        })),
+        participants: result.participants?.map(participant => ({
+          ...participant,
+          speaker_id: replaceSpeakerNamesHelper(participant.speaker_id, initialMappings),
+          key_contributions: participant.key_contributions?.map(contrib => replaceSpeakerNamesHelper(contrib, initialMappings)),
+          expertise_areas: participant.expertise_areas?.map(area => replaceSpeakerNamesHelper(area, initialMappings))
+        })),
+        topics: result.topics?.map(topic => ({
+          ...topic,
+          key_points: topic.key_points?.map(point => replaceSpeakerNamesHelper(point, initialMappings)),
+          decisions_made: topic.decisions_made?.map(decision => replaceSpeakerNamesHelper(decision, initialMappings)),
+          open_questions: topic.open_questions?.map(question => replaceSpeakerNamesHelper(question, initialMappings))
+        }))
+      };
+    }
+    return result;
+  });
+
+  // Helper function for initial processing
+  const replaceSpeakerNamesHelper = (text: string, mappings: Record<string, string>): string => {
+    let processedText = text;
+    Object.entries(mappings).forEach(([speakerId, realName]) => {
+      if (realName.trim()) {
+        const regex = new RegExp(`\\b${speakerId}\\b`, 'gi');
+        processedText = processedText.replace(regex, realName);
+      }
+    });
+    return processedText;
+  };
 
   // Function to replace speaker IDs with real names
   const replaceSpeakerNames = (text: string, mappings: Record<string, string>): string => {
@@ -34,7 +103,8 @@ function ResultsDisplay({ result }: ResultsDisplayProps) {
   const handleSpeakerMappingUpdate = (mappings: Record<string, string>) => {
     setSpeakerMappings(mappings);
     
-    // Create a processed version of the result with replaced names
+    // Create a processed version of the result with replaced names, starting from the original result
+    // to ensure we get the correct replacements for all speaker names
     const processed: AnalysisResult = {
       ...result,
       transcript: replaceSpeakerNames(result.transcript, mappings),

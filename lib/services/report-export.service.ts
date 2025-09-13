@@ -41,28 +41,12 @@ export class ReportExportService {
     sections.push(data.summary);
     sections.push('');
 
-    // Speaker Information (if available and has named speakers)
-    if (data.speaker_identification?.speaker_hints) {
-      const namedSpeakers = data.speaker_identification.speaker_hints.filter(hint => 
-        hint.suggested_name || (hint.role_hints && hint.role_hints.length > 0)
-      );
-      
-      if (namedSpeakers.length > 0) {
-        sections.push('## Speaker Information');
-        namedSpeakers.forEach(hint => {
-          sections.push(`### ${hint.speaker_id}`);
-          if (hint.suggested_name) {
-            sections.push(`- **Name:** ${hint.suggested_name}`);
-          }
-          if (hint.role_hints && hint.role_hints.length > 0) {
-            sections.push(`- **Role:** ${hint.role_hints.join(', ')}`);
-          }
-          if (hint.context_clues && hint.context_clues.length > 0) {
-            sections.push(`- **Context:** ${hint.context_clues.join(', ')}`);
-          }
-          sections.push('');
-        });
-      }
+    // Speaker Information (showing total speakers detected)
+    if (data.speaker_identification) {
+      sections.push('## Speaker Information');
+      sections.push(`- **Total Speakers Detected:** ${data.speaker_identification.total_speakers || 'Unknown'}`);
+      sections.push('- **Note:** Speaker names are reflected throughout the transcript and content sections below.');
+      sections.push('');
     }
 
     // Minutes of Meeting (MOM)

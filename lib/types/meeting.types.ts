@@ -58,7 +58,7 @@ export interface AnalysisResult {
   mom?: MinutesOfMeeting;
   tasks: Task[];
   transcript: string;
-  speaker_identification?: SpeakerIdentification;
+  speaker_identification: SpeakerIdentification;
   participants?: Participant[];
   topics?: Topic[];
   meeting_metadata?: MeetingMetadata;
