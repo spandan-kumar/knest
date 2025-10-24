@@ -10,12 +10,15 @@ export default auth((req) => {
   const isApiRoute = nextUrl.pathname.startsWith('/api');
   const isRootRoute = nextUrl.pathname === '/';
 
-  console.log('Middleware debug:', {
-    pathname: nextUrl.pathname,
-    isLoggedIn,
-    hasAuth: !!req.auth,
-    user: req.auth?.user
-  });
+  // Only log in development and exclude session polling to reduce noise
+  if (process.env.NODE_ENV === 'development' && nextUrl.pathname !== '/api/auth/session') {
+    console.log('Middleware debug:', {
+      pathname: nextUrl.pathname,
+      isLoggedIn,
+      hasAuth: !!req.auth,
+      user: req.auth?.user
+    });
+  }
 
   // Allow all auth API routes
   if (isApiAuthRoute) {

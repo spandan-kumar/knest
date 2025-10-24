@@ -1,7 +1,7 @@
 import { auth } from '@/auth';
 import { redirect } from 'next/navigation';
 import SessionProvider from './components/SessionProvider';
-import MeetingAnalyzer from './components/MeetingAnalyzer';
+import MeetingAnalyzer from './components/meeting/MeetingAnalyzer';
 
 export default async function Home() {
   const session = await auth();

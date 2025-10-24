@@ -1,0 +1,81 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             String    @id @default(cuid())
+  email          String    @unique
+  name           String
+  hashedPassword String
+  geminiApiKey   String?   // Encrypted, BYOK model
+  createdAt      DateTime  @default(now())
+  lastLogin      DateTime?
+
+  // Relations
+  meetings              Meeting[]
+  meetingParticipations MeetingParticipant[]
+
+  @@map("users")
+}
+
+model Meeting {
+  id              String   @id @default(cuid())
+  userId          String
+  title           String
+  fileName        String?
+  fileSize        Int?
+  duration        Int?     // Duration in seconds
+  analysisResult  String   // JSON stringified AnalysisResult
+  speakerMappings String?  // JSON stringified Record<string, string>
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  user         User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  shares       SharedMeeting[]
+  participants MeetingParticipant[]
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("meetings")
+}
+
+model SharedMeeting {
+  id         String    @id @default(cuid())
+  meetingId  String
+  shareToken String    @unique
+  createdAt  DateTime  @default(now())
+  expiresAt  DateTime?
+
+  // Relations
+  meeting    Meeting   @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+
+  @@index([shareToken])
+  @@index([meetingId])
+  @@map("shared_meetings")
+}
+
+model MeetingParticipant {
+  id        String   @id @default(cuid())
+  meetingId String
+  userId    String
+  role      String   @default("participant") // "owner" or "participant"
+  createdAt DateTime @default(now())
+
+  // Relations
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([meetingId, userId])
+  @@index([userId])
+  @@index([meetingId])
+  @@map("meeting_participants")
+}

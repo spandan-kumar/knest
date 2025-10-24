@@ -20,10 +20,9 @@ export class MeetingProcessingService {
   private fileValidator: FileValidationService;
   private geminiService: GeminiAIService;
 
-  constructor() {
-    const apiKey = process.env.GEMINI_KEY;
+  constructor(apiKey: string) {
     if (!apiKey) {
-      throw new Error('Gemini API key not configured. Please set GEMINI_KEY environment variable.');
+      throw new Error('Gemini API key is required. Please configure your API key in settings.');
     }
 
     this.fileValidator = new FileValidationService();

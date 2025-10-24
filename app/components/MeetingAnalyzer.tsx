@@ -230,9 +230,10 @@ function ResultsDisplay({ result }: ResultsDisplayProps) {
       </div>
 
       {result.speaker_identification && (
-        <SpeakerMapping 
+        <SpeakerMapping
           speakerIdentification={result.speaker_identification}
           onSpeakerMappingUpdate={handleSpeakerMappingUpdate}
+          meetingId={null}
         />
       )}
 

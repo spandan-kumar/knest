@@ -6,13 +6,15 @@ import type { SpeakerIdentification, SpeakerHint } from '@/lib/types/meeting.typ
 interface SpeakerMappingProps {
   speakerIdentification: SpeakerIdentification;
   onSpeakerMappingUpdate: (mappings: Record<string, string>) => void;
+  meetingId: string | null;
   className?: string;
 }
 
-export default function SpeakerMapping({ 
-  speakerIdentification, 
+export default function SpeakerMapping({
+  speakerIdentification,
   onSpeakerMappingUpdate,
-  className = '' 
+  meetingId,
+  className = ''
 }: SpeakerMappingProps) {
   const [mappings, setMappings] = useState<Record<string, string>>(() => {
     // Initialize with suggested names if available
@@ -26,6 +28,8 @@ export default function SpeakerMapping({
   });
 
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
   useEffect(() => {
     onSpeakerMappingUpdate(mappings);
@@ -51,6 +55,41 @@ export default function SpeakerMapping({
       case 'medium': return '🤔';
       case 'low': return '❓';
       default: return '🔍';
+    }
+  };
+
+  const handleSaveMappings = async () => {
+    if (!meetingId) {
+      setSaveMessage('Cannot save: Meeting ID not available');
+      setTimeout(() => setSaveMessage(null), 3000);
+      return;
+    }
+
+    setIsSaving(true);
+    setSaveMessage(null);
+
+    try {
+      const response = await fetch(`/api/meetings/${meetingId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          speakerMappings: mappings,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save speaker mappings');
+      }
+
+      setSaveMessage('Speaker mappings saved successfully!');
+      setTimeout(() => setSaveMessage(null), 3000);
+    } catch (error) {
+      setSaveMessage('Failed to save speaker mappings');
+      setTimeout(() => setSaveMessage(null), 3000);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -135,11 +174,40 @@ export default function SpeakerMapping({
           <div className="mt-4 space-y-3">
             <div className="p-3 bg-violet-900/20 border border-violet-700/30 rounded-lg">
               <p className="text-sm text-violet-200">
-                💡 <strong>Tip:</strong> Assign real names to speakers to make the transcript and reports more readable. 
+                💡 <strong>Tip:</strong> Assign real names to speakers to make the transcript and reports more readable.
                 The AI has provided hints based on conversation context to help you identify speakers.
               </p>
             </div>
-            
+
+            {/* Save Button */}
+            {meetingId && (
+              <div className="flex items-center justify-between">
+                <button
+                  onClick={handleSaveMappings}
+                  disabled={isSaving}
+                  className="px-6 py-3 bg-gradient-to-r from-violet-600 to-indigo-600 text-white rounded-xl hover:from-violet-700 hover:to-indigo-700 transition-all duration-200 flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isSaving ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                      <span>Saving...</span>
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      <span>Save Speaker Names</span>
+                    </>
+                  )}
+                </button>
+                {saveMessage && (
+                  <span className={`text-sm ${saveMessage.includes('success') ? 'text-green-400' : 'text-red-400'}`}>
+                    {saveMessage}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
